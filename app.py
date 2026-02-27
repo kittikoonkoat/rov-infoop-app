@@ -10,81 +10,90 @@ import re
 # ==========================================
 
 def init_connection():
-    """เชื่อมต่อกับ Google Sheets ผ่าน Streamlit Secrets"""
+    """เชื่อมต่อกับ Google Sheets โดยใช้ค่าจาก Streamlit Secrets"""
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     try:
+        # ดึงข้อมูลจาก Secrets ที่คุณเพิ่ง Update ไป
         creds_dict = st.secrets["gcp_service_account"]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
+        # ตรวจสอบว่าชื่อไฟล์ Sheets ตรงกับ "RoV_Seeding_DB"
         return client.open("RoV_Seeding_DB")
     except Exception as e:
         st.error(f"เชื่อมต่อ Google Sheets ไม่ได้: {e}")
         return None
 
 def sync_data():
-    """ดึงข้อมูลล่าสุดจาก Sheets มาไว้ในแอป"""
+    """ดึงข้อมูลล่าสุดจาก Sheets มาเก็บใน Session State"""
     sh = init_connection()
     if sh:
-        st.session_state.db = sh.worksheet("tasks").get_all_records()
-        st.session_state.users_db = sh.worksheet("users").get_all_records()
-        st.session_state.channels = sh.worksheet("channels").get_all_records()
-        st.sidebar.success("🔄 ข้อมูลซิงค์ล่าสุดแล้ว")
+        try:
+            st.session_state.db = sh.worksheet("tasks").get_all_records()
+            st.session_state.users_db = sh.worksheet("users").get_all_records()
+            st.session_state.channels = sh.worksheet("channels").get_all_records()
+            st.sidebar.success("🔄 ข้อมูลซิงค์ล่าสุดแล้ว")
+        except Exception as e:
+            st.error(f"ไม่พบ Worksheet ที่กำหนด: {e}")
 
 def save_data(worksheet_name, data_list):
-    """บันทึกข้อมูลจากแอปกลับไปที่ Sheets"""
+    """บันทึกข้อมูลกลับไปยัง Google Sheets"""
     sh = init_connection()
     if sh:
-        ws = sh.worksheet(worksheet_name)
-        ws.clear()
-        if data_list:
-            df = pd.DataFrame(data_list)
-            ws.update([df.columns.values.tolist()] + df.values.tolist())
+        try:
+            ws = sh.worksheet(worksheet_name)
+            ws.clear()
+            if data_list:
+                df = pd.DataFrame(data_list)
+                ws.update([df.columns.values.tolist()] + df.values.tolist())
+        except Exception as e:
+            st.error(f"บันทึกข้อมูลไม่สำเร็จ: {e}")
 
 # ==========================================
-# 2. AI AGENT CONNECTOR (แก้ไขเพื่อให้ได้ 10 ตัวเลือก)
+# 2. AI AGENT CONNECTOR (ปรับปรุงเพื่อ 10 ตัวเลือก)
 # ==========================================
 
 def call_ai_agent(topic, guide):
-    """เรียกใช้ AI ช่วยร่างข้อความ 10 รูปแบบ"""
+    """เรียกใช้ INSEA AI และแกะข้อความออกมาเป็น 10 ตัวเลือก"""
     api_url = "https://ai.insea.io/api/workflows/15905/run"
     api_key = "cqfxerDagpPV70dwoMQeDSKC9iwCY1EH" 
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     
-    # เพิ่มคำสั่งใน Persona ให้ชัดเจนว่าต้องการ 10 ตัวเลือก
     payload = {
         "inputs": {
             "Topic": str(topic), 
             "Guide": str(guide), 
-            "Persona": "กะเทย เล่น rov มานาน พูดจาจิกกัดแต่น่ารัก ช่วยร่างข้อความมาให้เลือก 10 แบบ โดยขึ้นบรรทัดใหม่ทุกครั้งที่จบแต่ละแบบ"
+            "Persona": "กะเทย เล่น rov มานาน พูดจาจิกกัดแต่น่ารัก ช่วยร่างข้อความมาให้เลือก 10 แบบ โดยแยกบรรทัดกันให้ชัดเจน ห้ามใส่เลขข้อ"
         },
         "response_mode": "blocking", 
         "user": "kittikoon_user"
     }
     
     try:
-        res = requests.post(api_url, json=payload, headers=headers, timeout=60).json()
-        raw = ""
-        if 'data' in res and 'outputs' in res['data']:
-            raw = res['data']['outputs'].get('text', "")
-        elif 'text' in res:
-            raw = res.get('text', "")
-
-        # ใช้การแยกบรรทัดแบบยืดหยุ่น (รองรับทั้ง \n และเลขข้อ 1., 2.)
-        lines = re.split(r'\n|\d+\.', str(raw))
-        # กรองเอาเฉพาะบรรทัดที่มีข้อความจริงๆ และตัดช่องว่าง
-        final_options = [l.strip() for l in lines if len(l.strip()) > 5]
+        response = requests.post(api_url, json=payload, headers=headers, timeout=60)
+        res = response.json()
         
-        return final_options[:10] # ส่งคืนสูงสุด 10 ข้อความ
+        # แกะโครงสร้าง JSON ของ INSEA AI
+        raw_text = ""
+        if 'data' in res and 'outputs' in res['data']:
+            raw_text = res['data']['outputs'].get('text', "")
+        elif 'text' in res:
+            raw_text = res.get('text', "")
+        
+        # แยกข้อความด้วยการขึ้นบรรทัดใหม่ หรือเลขข้อ (ถ้ามี)
+        options = [l.strip() for l in re.split(r'\n|\d+\.', str(raw_text)) if len(l.strip()) > 5]
+        
+        return options[:10] if options else ["AI คิดไม่ออก ลองกดใหม่อีกครั้งนะคะ"]
         
     except Exception as e:
-        return [f"เกิดข้อผิดพลาดในการเรียก AI: {str(e)}"]
+        return [f"❌ Error เชื่อมต่อ AI: {str(e)}"]
 
 # ==========================================
-# 3. UI & INITIALIZATION
+# 3. UI INITIALIZATION
 # ==========================================
 
 st.set_page_config(page_title="RoV Seeding Management", layout="wide")
 
+# สร้าง Session State ถ้ายังไม่มี
 if 'db' not in st.session_state:
     sync_data()
 
@@ -138,7 +147,6 @@ else:
                     save_data("channels", st.session_state.channels)
                     st.success("บันทึกกลุ่มใหม่แล้ว!")
                     st.rerun()
-            st.write("กลุ่มทั้งหมดในระบบ:")
             st.table(pd.DataFrame(st.session_state.channels))
 
         elif menu == "มอบหมายงาน":
@@ -162,19 +170,21 @@ else:
             if not review_list: st.info("ไม่มีงานรอตรวจ")
             for t in review_list:
                 with st.expander(f"📌 {t['Topic']} (โดย {t['PIC']})", expanded=True):
-                    st.write(f"จะโพสต์ที่กลุ่ม: **{t['FB_Group_Name']}**")
-                    t['Draft'] = st.text_area("แก้ไขข้อความ:", value=t['Draft'], key=f"boss_{t['id']}")
+                    st.write(f"กลุ่มเป้าหมาย: {t['FB_Group_Name']}")
+                    t['Draft'] = st.text_area("ตรวจข้อความ:", value=t['Draft'], key=f"boss_{t['id']}")
                     if st.button("✅ Approve", key=f"app_{t['id']}"):
                         t['Status'] = "Approved"
                         save_data("tasks", st.session_state.db)
                         st.rerun()
 
     else:
+        # --- เมนู ADMIN ---
         menu = st.sidebar.radio("เมนูแอดมิน:", ["งานที่ได้รับมอบหมาย", "ส่งยอดประจำวัน"])
         
         if menu == "งานที่ได้รับมอบหมาย":
             st.title("📥 My Assigned Tasks")
             my_jobs = [t for t in st.session_state.db if t['PIC'] == st.session_state.current_user]
+            
             for t in my_jobs:
                 with st.expander(f"📌 {t['Topic']} | สถานะ: {t['Status']}", expanded=True):
                     if t['Status'] == "Pending":
@@ -185,19 +195,21 @@ else:
                         t['FB_Group_Name'] = selected_g
                         t['FB_Group_URL'] = g_info['group_url'] if g_info else ""
                         
+                        # ปุ่มเรียก AI
                         if st.button("✨ Draft with AI (10 แบบ)", key=f"ai_{t['id']}"):
-                            with st.spinner("AI กำลังคิดข้อความจิกกัดให้ 10 แบบนะคะ..."):
-                                st.session_state[f"ai_res_{t['id']}"] = call_ai_agent(t['Topic'], t['Guide'])
+                            with st.spinner("กะเทยกำลังร่างบทให้ 10 แบบ..."):
+                                st.session_state[f"ai_options_{t['id']}"] = call_ai_agent(t['Topic'], t['Guide'])
                         
-                        if f"ai_res_{t['id']}" in st.session_state:
+                        # แสดงปุ่มตัวเลือกจาก AI
+                        if f"ai_options_{t['id']}" in st.session_state:
                             st.write("🤖 เลือกข้อความที่โดนใจแอดมิน:")
-                            for i, msg in enumerate(st.session_state[f"ai_res_{t['id']}"]):
-                                # แสดงข้อความตัวอย่างสั้นๆ บนปุ่ม
-                                if st.button(f"เลือกแบบที่ {i+1}: {msg[:60]}...", key=f"sel_{t['id']}_{i}"):
+                            opts = st.session_state[f"ai_options_{t['id']}"]
+                            for i, msg in enumerate(opts):
+                                if st.button(f"✅ แบบที่ {i+1}: {msg[:60]}...", key=f"btn_{t['id']}_{i}"):
                                     t['Draft'] = msg
                                     st.rerun()
                         
-                        t['Draft'] = st.text_area("ร่างข้อความสุดท้าย (แก้ไขเพิ่มได้):", value=t['Draft'], key=f"ed_{t['id']}", height=150)
+                        t['Draft'] = st.text_area("ร่างข้อความสุดท้าย:", value=t['Draft'], key=f"ed_{t['id']}", height=150)
                         if st.button("ส่งให้หัวหน้าตรวจ", key=f"sub_{t['id']}", use_container_width=True):
                             t['Status'] = "Reviewing"
                             save_data("tasks", st.session_state.db)
