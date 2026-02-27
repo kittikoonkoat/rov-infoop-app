@@ -1,39 +1,33 @@
 import streamlit as st
 import pandas as pd
 import requests
+import json
 
-# --- 1. UI Styling: Gemini Luxury Dark Mode ---
+# --- 1. UI Styling: High-End Gemini Dark ---
 st.set_page_config(page_title="RoV Seeding Portal", layout="wide")
 
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
     
-    .stApp {
-        background-color: #131314;
-        color: #E3E3E3;
-    }
-    
-    html, body, [class*="css"] { 
-        font-family: 'Inter', -apple-system, sans-serif; 
-    }
+    .stApp { background-color: #131314; color: #E3E3E3; }
+    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 
-    /* Luxury Space Theme */
+    /* Sidebar Luxury */
     [data-testid="stSidebar"] {
         background-color: #1E1F20 !important;
         border-right: 1px solid #333537;
     }
 
-    /* Clean Input Fields */
+    /* Input & Text Area */
     .stTextInput input, .stTextArea textarea, .stSelectbox div[data-baseweb="select"] {
         background-color: #1E1F20 !important;
         color: #FFFFFF !important;
         border: 1px solid #444746 !important;
         border-radius: 12px !important;
-        padding: 12px !important;
     }
 
-    /* Gemini Gradient Buttons */
+    /* Gemini Gradient Button */
     div.stButton > button {
         border-radius: 24px;
         background: linear-gradient(90deg, #4285F4, #1A73E8);
@@ -41,31 +35,22 @@ st.markdown("""
         font-weight: 500;
         border: none;
         padding: 0.6rem 2.5rem;
-        transition: all 0.3s ease;
     }
     
-    div.stButton > button:hover {
-        box-shadow: 0 0 20px rgba(66, 133, 244, 0.4);
-        transform: translateY(-2px);
-    }
-
-    /* Glass Cards */
-    div[data-testid="stExpander"] {
-        border-radius: 16px !important;
-        border: 1px solid #444746 !important;
-        background-color: #1E1F20 !important;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.2) !important;
-    }
-
-    h1, h2, h3 { color: #FFFFFF !important; }
-    
-    /* High Visibility AI Box */
+    /* AI Result Box - High Visibility */
     .stInfo {
         background-color: #041E3C !important;
         color: #D3E3FD !important;
         border: 1px solid #0842A0 !important;
         border-radius: 12px !important;
         padding: 15px !important;
+    }
+
+    /* Clean Expander */
+    div[data-testid="stExpander"] {
+        border-radius: 16px !important;
+        border: 1px solid #444746 !important;
+        background-color: #1E1F20 !important;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -82,7 +67,7 @@ if 'users' not in st.session_state:
 if 'db' not in st.session_state: st.session_state.db = []
 if 'logged_in' not in st.session_state: st.session_state.logged_in = False
 
-# --- 3. API Call (Optimized for text node) ---
+# --- 3. Robust AI Connector ---
 def call_seeding_agent(topic, guide, persona):
     api_url = "https://ai.insea.io/api/workflows/15905/run"
     api_key = "QaddR42ehoje6VK9ZxITB9ZFS5C2mr1f"
@@ -90,104 +75,90 @@ def call_seeding_agent(topic, guide, persona):
     payload = {
         "inputs": {"Topic": topic, "Guide": guide, "Persona": persona},
         "response_mode": "blocking",
-        "user": "gemini_fixed_user"
+        "user": "gemini_final_user"
     }
     try:
-        response = requests.post(api_url, json=payload, headers=headers, timeout=30)
-        result = response.json()
-        outputs = result.get('data', {}).get('outputs', {})
-        # ดึงจาก key 'text' ตามภาพ image_1b96d8.png
-        raw_text = outputs.get('text') or next(iter(outputs.values()), "")
+        response = requests.post(api_url, json=payload, headers=headers, timeout=60)
+        res_data = response.json()
+        
+        # ค้นหาข้อความแบบครอบจักรวาล (เจาะจง 'text' ตามภาพ image_1b96d8.png)
+        outputs = res_data.get('data', {}).get('outputs', {})
+        raw_text = outputs.get('text') or outputs.get('answer') or next(iter(outputs.values()), "")
         
         if not raw_text:
             return []
-        
-        # แยกข้อความ 10 ข้อ
-        return [line.strip() for line in raw_text.split('\n') if len(line.strip()) > 5]
+            
+        # แยกข้อความ 10 บรรทัด
+        return [line.strip() for line in str(raw_text).split('\n') if len(line.strip()) > 3]
     except Exception as e:
-        st.error(f"API Error: {e}")
         return []
 
-# --- 4. Login System (Clean Version) ---
-def show_login():
+# --- 4. Login System ---
+def login_screen():
     st.markdown("<br><h1 style='text-align: center;'>✨ RoV Seeding Portal</h1>", unsafe_allow_html=True)
     _, col, _ = st.columns([1, 1.5, 1])
     with col:
-        with st.form("login_portal"):
-            u_email = st.text_input("Garena Email", placeholder="example@garena.com")
-            u_pass = st.text_input("Password", type="password", placeholder="••••••••")
+        with st.form("login"):
+            u = st.text_input("Garena Email")
+            p = st.text_input("Password", type="password")
             if st.form_submit_button("Sign In"):
-                if u_email in st.session_state.users and st.session_state.users[u_email]["pass"] == u_pass:
+                if u in st.session_state.users and st.session_state.users[u]["pass"] == p:
                     st.session_state.logged_in = True
-                    st.session_state.user_info = st.session_state.users[u_email]
+                    st.session_state.user_info = st.session_state.users[u]
                     st.rerun()
                 else:
                     st.error("อีเมลหรือรหัสผ่านไม่ถูกต้อง")
 
 if not st.session_state.logged_in:
-    show_login()
+    login_screen()
 else:
-    # --- 5. Main Application ---
+    # --- 5. Main App ---
     user = st.session_state.user_info
-    st.sidebar.markdown(f"### 💎 User: {user['name']}")
-    if st.sidebar.button("Sign Out"):
+    st.sidebar.markdown(f"### 💎 {user['name']}")
+    if st.sidebar.button("Log Out"):
         st.session_state.logged_in = False
         st.rerun()
 
-    menu = ["PIC Workspace"]
-    if user['role'] == "Admin":
-        menu = ["Admin Control", "PIC Workspace", "Daily Report", "Management"]
-    choice = st.sidebar.selectbox("Navigation", menu)
+    menu = ["PIC Workspace", "Daily Report"]
+    if user['role'] == "Admin": menu = ["Admin Control", "PIC Workspace", "Daily Report"]
+    choice = st.sidebar.selectbox("เมนู", menu)
 
     if choice == "Admin Control":
         st.title("👨‍💻 Admin Control")
-        with st.expander("➕ Assign New Task", expanded=True):
+        with st.expander("Assign New Task"):
             with st.form("task_f"):
-                t_topic = st.text_input("หัวข้อ (Topic)")
-                t_pic = st.selectbox("ผู้รับผิดชอบ", [v['name'] for v in st.session_state.users.values() if v['role']=="PIC"])
+                t_topic = st.text_input("Topic")
+                t_pic = st.selectbox("Assign to", [v['name'] for v in st.session_state.users.values() if v['role']=="PIC"])
                 t_guide = st.text_area("Guideline")
-                if st.form_submit_button("Deploy Task"):
+                if st.form_submit_button("Deploy"):
                     st.session_state.db.append({"id": len(st.session_state.db)+1, "Topic": t_topic, "PIC": t_pic, "Guide": t_guide, "Status": "Waiting", "Draft": ""})
-                    st.success("มอบหมายงานสำเร็จ!")
+                    st.success("มอบหมายงานสำเร็จ")
 
     elif choice == "PIC Workspace":
         st.title("📱 My Workspace")
         tasks = [t for t in st.session_state.db if t['PIC'] == user['name'] or user['role'] == "Admin"]
-        
-        if not tasks: st.info("ยังไม่มีงานที่ได้รับมอบหมาย")
-        
+        if not tasks: st.info("ยังไม่มีงานในรายการ")
         for t in tasks:
-            with st.expander(f"📌 {t['Topic']} — {t['Status']}", expanded=True):
+            with st.expander(f"📌 {t['Topic']} - {t['Status']}"):
                 st.write(f"**Guide:** {t['Guide']}")
-                
                 if st.button("✨ Draft with AI", key=f"ai_{t['id']}"):
-                    with st.spinner('Gemini is generating...'):
+                    with st.spinner('Gemini กำลังร่างข้อความ...'):
                         res = call_seeding_agent(t['Topic'], t['Guide'], user['name'])
-                        if res:
-                            st.session_state[f"res_{t['id']}"] = res
-                        else:
-                            st.error("AI ไม่ส่งข้อมูลกลับมา (ตรวจสอบการ Publish ใน Agent)")
+                        if res: st.session_state[f"res_{t['id']}"] = res
+                        else: st.warning("AI ไม่ส่งข้อมูลกลับมา กรุณากดปุ่ม Publish ในหน้า Agent (Insea) แล้วลองอีกครั้ง")
 
-                res_key = f"res_{t['id']}"
-                if res_key in st.session_state:
-                    st.markdown("---")
-                    for i, msg in enumerate(st.session_state[res_key]):
+                r_key = f"res_{t['id']}"
+                if r_key in st.session_state:
+                    for i, msg in enumerate(st.session_state[r_key]):
                         st.info(msg)
-                        if st.button(f"เลือกข้อความแบบที่ {i+1}", key=f"sel_{t['id']}_{i}"):
+                        if st.button(f"เลือกแบบที่ {i+1}", key=f"sel_{t['id']}_{i}"):
                             t['Draft'] = msg
                 
-                t['Draft'] = st.text_area("ข้อความสุดท้ายที่จะใช้", value=t['Draft'], key=f"ed_{t['id']}", height=120)
-                
-                if st.button("ยืนยันส่งงาน (Submit)", key=f"sub_{t['id']}"):
+                t['Draft'] = st.text_area("Final Draft", value=t['Draft'], key=f"ed_{t['id']}")
+                if st.button("Submit", key=f"sub_{t['id']}"):
                     t['Status'] = "Pending"
-                    st.success("ส่งงานเรียบร้อย!")
                     st.rerun()
 
     elif choice == "Daily Report":
-        st.title("📊 Daily Summary")
+        st.title("📊 Summary")
         if st.session_state.db: st.dataframe(pd.DataFrame(st.session_state.db), use_container_width=True)
-        else: st.write("ไม่มีข้อมูลงาน")
-
-    elif choice == "Management":
-        st.title("👥 Team Management")
-        st.table(pd.DataFrame([{"Name": v['name'], "Role": v['role']} for v in st.session_state.users.values()]))
