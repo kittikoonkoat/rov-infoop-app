@@ -6,14 +6,13 @@ import requests
 import re
 
 # ==========================================
-# 1. GOOGLE SHEETS CONNECTION SETUP (แก้ไขเพื่อใช้บน Cloud)
+# 1. GOOGLE SHEETS CONNECTION SETUP
 # ==========================================
 
 def init_connection():
     """เชื่อมต่อกับ Google Sheets ผ่าน Streamlit Secrets"""
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     try:
-        # ดึงข้อมูลจาก Secrets แทนการอ่านไฟล์ .json
         creds_dict = st.secrets["gcp_service_account"]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
@@ -42,19 +41,21 @@ def save_data(worksheet_name, data_list):
             ws.update([df.columns.values.tolist()] + df.values.tolist())
 
 # ==========================================
-# 2. AI AGENT CONNECTOR (INSEA AI)
+# 2. AI AGENT CONNECTOR (แก้ไขเพื่อให้ได้ 10 ตัวเลือก)
 # ==========================================
 
 def call_ai_agent(topic, guide):
-    """เรียกใช้ AI ช่วยร่างข้อความ"""
+    """เรียกใช้ AI ช่วยร่างข้อความ 10 รูปแบบ"""
     api_url = "https://ai.insea.io/api/workflows/15905/run"
     api_key = "cqfxerDagpPV70dwoMQeDSKC9iwCY1EH" 
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    
+    # เพิ่มคำสั่งใน Persona ให้ชัดเจนว่าต้องการ 10 ตัวเลือก
     payload = {
         "inputs": {
             "Topic": str(topic), 
             "Guide": str(guide), 
-            "Persona": "กะเทย เล่น rov มานาน พูดจาจิกกัดแต่น่ารัก"
+            "Persona": "กะเทย เล่น rov มานาน พูดจาจิกกัดแต่น่ารัก ช่วยร่างข้อความมาให้เลือก 10 แบบ โดยขึ้นบรรทัดใหม่ทุกครั้งที่จบแต่ละแบบ"
         },
         "response_mode": "blocking", 
         "user": "kittikoon_user"
@@ -62,15 +63,18 @@ def call_ai_agent(topic, guide):
     
     try:
         res = requests.post(api_url, json=payload, headers=headers, timeout=60).json()
-        
         raw = ""
         if 'data' in res and 'outputs' in res['data']:
             raw = res['data']['outputs'].get('text', "")
         elif 'text' in res:
             raw = res.get('text', "")
 
-        lines = [l.strip() for l in str(raw).split('\n') if len(l.strip()) > 2]
-        return lines if lines else ["AI ยังคิดไม่ออก ลองกดใหม่อีกครั้งนะคะ"]
+        # ใช้การแยกบรรทัดแบบยืดหยุ่น (รองรับทั้ง \n และเลขข้อ 1., 2.)
+        lines = re.split(r'\n|\d+\.', str(raw))
+        # กรองเอาเฉพาะบรรทัดที่มีข้อความจริงๆ และตัดช่องว่าง
+        final_options = [l.strip() for l in lines if len(l.strip()) > 5]
+        
+        return final_options[:10] # ส่งคืนสูงสุด 10 ข้อความ
         
     except Exception as e:
         return [f"เกิดข้อผิดพลาดในการเรียก AI: {str(e)}"]
@@ -165,17 +169,6 @@ else:
                         save_data("tasks", st.session_state.db)
                         st.rerun()
 
-        elif menu == "จัดการแอดมิน":
-            st.title("👥 Admin Account Management")
-            with st.form("add_admin"):
-                new_e = st.text_input("Email แอดมิน")
-                new_p = st.text_input("Password")
-                if st.form_submit_button("สร้างบัญชี"):
-                    st.session_state.users_db.append({"email": new_e, "password": new_p, "role": "Admin", "name": new_e.split('@')[0]})
-                    save_data("users", st.session_state.users_db)
-                    st.rerun()
-            st.table(pd.DataFrame(st.session_state.users_db))
-
     else:
         menu = st.sidebar.radio("เมนูแอดมิน:", ["งานที่ได้รับมอบหมาย", "ส่งยอดประจำวัน"])
         
@@ -192,17 +185,20 @@ else:
                         t['FB_Group_Name'] = selected_g
                         t['FB_Group_URL'] = g_info['group_url'] if g_info else ""
                         
-                        if st.button("✨ Draft with AI", key=f"ai_{t['id']}"):
-                            st.session_state[f"ai_res_{t['id']}"] = call_ai_agent(t['Topic'], t['Guide'])
+                        if st.button("✨ Draft with AI (10 แบบ)", key=f"ai_{t['id']}"):
+                            with st.spinner("AI กำลังคิดข้อความจิกกัดให้ 10 แบบนะคะ..."):
+                                st.session_state[f"ai_res_{t['id']}"] = call_ai_agent(t['Topic'], t['Guide'])
                         
                         if f"ai_res_{t['id']}" in st.session_state:
+                            st.write("🤖 เลือกข้อความที่โดนใจแอดมิน:")
                             for i, msg in enumerate(st.session_state[f"ai_res_{t['id']}"]):
-                                if st.button(f"เลือกแบบที่ {i+1}", key=f"sel_{t['id']}_{i}"):
+                                # แสดงข้อความตัวอย่างสั้นๆ บนปุ่ม
+                                if st.button(f"เลือกแบบที่ {i+1}: {msg[:60]}...", key=f"sel_{t['id']}_{i}"):
                                     t['Draft'] = msg
                                     st.rerun()
                         
-                        t['Draft'] = st.text_area("ร่างข้อความสุดท้าย:", value=t['Draft'], key=f"ed_{t['id']}")
-                        if st.button("ส่งให้หัวหน้าตรวจ", key=f"sub_{t['id']}"):
+                        t['Draft'] = st.text_area("ร่างข้อความสุดท้าย (แก้ไขเพิ่มได้):", value=t['Draft'], key=f"ed_{t['id']}", height=150)
+                        if st.button("ส่งให้หัวหน้าตรวจ", key=f"sub_{t['id']}", use_container_width=True):
                             t['Status'] = "Reviewing"
                             save_data("tasks", st.session_state.db)
                             st.rerun()
