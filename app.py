@@ -1,63 +1,104 @@
 import streamlit as st
 import pandas as pd
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 import requests
 import re
 
-# --- 1. การตั้งค่าหน้าตาเว็บ (UI) ---
-st.set_page_config(page_title="RoV Seeding Management System", layout="wide")
-st.markdown("""
-    <style>
-    .stApp { background-color: #131314; color: #E3E3E3; }
-    [data-testid="stSidebar"] { background-color: #1E1F20 !important; }
-    div.stButton > button { border-radius: 24px; font-weight: 500; }
-    div.stButton > button:disabled { background: #333537 !important; color: #757575 !important; }
-    .stTextInput input, .stTextArea textarea { background-color: #1E1F20 !important; color: #FFFFFF !important; border-radius: 12px !important; }
-    </style>
-""", unsafe_allow_html=True)
+# ==========================================
+# 1. GOOGLE SHEETS CONNECTION SETUP
+# ==========================================
 
-# --- 2. การเตรียมฐานข้อมูลจำลอง (Initialization) ---
+def init_connection():
+    """เชื่อมต่อกับ Google Sheets API"""
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    try:
+        creds = ServiceAccountCredentials.from_json_keyfile_name("service_account.json", scope)
+        client = gspread.authorize(creds)
+        return client.open("RoV_Seeding_DB")
+    except Exception as e:
+        st.error(f"ไม่พบไฟล์กุญแจหรือเชื่อมต่อไม่ได้: {e}")
+        return None
+
+def sync_data():
+    """ดึงข้อมูลล่าสุดจาก Sheets มาไว้ในแอป"""
+    sh = init_connection()
+    if sh:
+        st.session_state.db = sh.worksheet("tasks").get_all_records()
+        st.session_state.users_db = sh.worksheet("users").get_all_records()
+        st.session_state.channels = sh.worksheet("channels").get_all_records()
+        st.sidebar.success("🔄 ข้อมูลซิงค์ล่าสุดแล้ว")
+
+def save_data(worksheet_name, data_list):
+    """บันทึกข้อมูลจากแอปกลับไปที่ Sheets"""
+    sh = init_connection()
+    if sh:
+        ws = sh.worksheet(worksheet_name)
+        ws.clear()
+        if data_list:
+            df = pd.DataFrame(data_list)
+            ws.update([df.columns.values.tolist()] + df.values.tolist())
+
+# ==========================================
+# 2. AI AGENT CONNECTOR (INSEA AI) - แก้ไขแล้ว
+# ==========================================
+
+def call_ai_agent(topic, guide):
+    """เรียกใช้ AI ช่วยร่างข้อความ"""
+    api_url = "https://ai.insea.io/api/workflows/15905/run"
+    api_key = "cqfxerDagpPV70dwoMQeDSKC9iwCY1EH" 
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    payload = {
+        "inputs": {
+            "Topic": str(topic), 
+            "Guide": str(guide), 
+            "Persona": "กะเทย เล่น rov มานาน พูดจาจิกกัดแต่น่ารัก"
+        },
+        "response_mode": "blocking", 
+        "user": "kittikoon_user"
+    }
+    
+    try:
+        res = requests.post(api_url, json=payload, headers=headers, timeout=60).json()
+        
+        # ส่วนแก้ไข: ดึงข้อมูลให้ถูกโครงสร้าง
+        raw = ""
+        if 'data' in res and 'outputs' in res['data']:
+            raw = res['data']['outputs'].get('text', "")
+        elif 'text' in res:
+            raw = res.get('text', "")
+
+        # แยกบรรทัดและกรองบรรทัดว่าง
+        lines = [l.strip() for l in str(raw).split('\n') if len(l.strip()) > 2]
+        return lines if lines else ["AI ยังคิดไม่ออก ลองกดใหม่อีกครั้งนะคะ"]
+        
+    except Exception as e:
+        return [f"เกิดข้อผิดพลาดในการเรียก AI: {str(e)}"]
+
+# ==========================================
+# 3. UI & INITIALIZATION
+# ==========================================
+
+st.set_page_config(page_title="RoV Seeding Management", layout="wide")
+
 if 'db' not in st.session_state:
-    st.session_state.db = []  # เก็บข้อมูลงานทั้งหมด
-
-if 'users_db' not in st.session_state:
-    # เริ่มต้นด้วยบัญชีคุณกิตติคุณ (Boss)
-    st.session_state.users_db = [
-        {"email": "kittikoon.k@garena.com", "password": "boss123", "role": "Boss", "name": "คุณกิตติคุณ"}
-    ]
+    sync_data()
 
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
-    st.session_state.user_role = None 
-    st.session_state.current_user = ""
 
-# --- 3. ฟังก์ชันเชื่อมต่อ Insea AI Agent ---
-def call_seeding_agent(topic, guide):
-    api_url = "https://ai.insea.io/api/workflows/15905/run"
-    api_key = "cqfxerDagpPV70dwoMQeDSKC9iwCY1EH"
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    payload = {
-        "Topic": str(topic), "Guide": str(guide), "Persona": "กะเทย เล่น rov มานาน",
-        "response_mode": "blocking", "user": "gemini_final"
-    }
-    try:
-        response = requests.post(api_url, json=payload, headers=headers, timeout=60)
-        res_data = response.json()
-        raw_output = res_data.get('data', {}).get('outputs', {}).get('text', "")
-        if not raw_output: raw_output = res_data.get('text', "")
-        lines = [l.strip() for l in str(raw_output).split('\n') if len(l.strip()) > 5]
-        return [re.sub(r'^\d+[\.\:]\s*', '', line) for line in lines]
-    except:
-        return []
+# ==========================================
+# 4. LOGIN SYSTEM
+# ==========================================
 
-# --- 4. หน้าจอ Login ---
 if not st.session_state.logged_in:
-    st.title("✨ RoV Seeding Portal")
+    st.title("💎 RoV Seeding Portal")
     col1, _ = st.columns([1, 1.5])
     with col1:
         u_email = st.text_input("Email")
         u_pass = st.text_input("Password", type="password")
         if st.button("Sign In", use_container_width=True):
-            user = next((x for x in st.session_state.users_db if x['email'] == u_email and x['password'] == u_pass), None)
+            user = next((x for x in st.session_state.users_db if str(x['email']) == u_email and str(x['password']) == u_pass), None)
             if user:
                 st.session_state.logged_in = True
                 st.session_state.user_role = user['role']
@@ -65,123 +106,124 @@ if not st.session_state.logged_in:
                 st.rerun()
             else:
                 st.error("อีเมลหรือรหัสผ่านไม่ถูกต้อง")
+
+# ==========================================
+# 5. MAIN APPLICATION
+# ==========================================
 else:
-    # --- 5. แถบเมนู (Sidebar) ---
     st.sidebar.title(f"👤 {st.session_state.current_user}")
-    st.sidebar.info(f"Role: {st.session_state.user_role}")
     
     if st.session_state.user_role == "Boss":
-        menu = st.sidebar.radio("เมนูหัวหน้า:", ["Dashboard (ภาพรวม)", "ตรวจงาน (Approval)", "มอบหมายงานใหม่", "จัดการ Admin Account"])
+        menu = st.sidebar.radio("เมนูหัวหน้า:", ["Dashboard", "จัดการกลุ่ม FB", "ตรวจงาน (Approval)", "มอบหมายงาน", "จัดการแอดมิน"])
+        
+        if menu == "Dashboard":
+            st.title("📊 สรุปรายงานประจำวัน")
+            if st.session_state.db:
+                df = pd.DataFrame(st.session_state.db)
+                st.dataframe(df)
+                st.metric("ยอดโพสต์รวม", df['Post_Count'].sum())
+            else: st.info("ยังไม่มีข้อมูลงาน")
+
+        elif menu == "จัดการกลุ่ม FB":
+            st.title("📂 Facebook Channel Management")
+            with st.form("add_channel"):
+                g_name = st.text_input("ชื่อกลุ่ม")
+                g_url = st.text_input("ลิงก์กลุ่ม (URL)")
+                if st.form_submit_button("บันทึกกลุ่ม"):
+                    st.session_state.channels.append({"group_name": g_name, "group_url": g_url})
+                    save_data("channels", st.session_state.channels)
+                    st.success("บันทึกกลุ่มใหม่แล้ว!")
+                    st.rerun()
+            st.write("กลุ่มทั้งหมดในระบบ:")
+            st.table(pd.DataFrame(st.session_state.channels))
+
+        elif menu == "มอบหมายงาน":
+            st.title("🎯 Assign New Task")
+            with st.form("assign_form"):
+                topic = st.text_input("หัวข้อ (Topic)")
+                guide = st.text_area("แนวทาง (Guideline)")
+                admins = [u['email'] for u in st.session_state.users_db if u['role'] == "Admin"]
+                pic = st.selectbox("เลือกแอดมินผู้รับผิดชอบ", admins)
+                if st.form_submit_button("Deploy Task"):
+                    st.session_state.db.append({
+                        "id": len(st.session_state.db)+1, "Topic": topic, "Guide": guide, "PIC": pic,
+                        "FB_Group_Name": "", "FB_Group_URL": "", "Draft": "", "Status": "Pending", "Post_Count": 0, "Comment_Count": 0
+                    })
+                    save_data("tasks", st.session_state.db)
+                    st.success(f"ส่งงานให้ {pic} เรียบร้อย!")
+
+        elif menu == "ตรวจงาน (Approval)":
+            st.title("👀 Approve Seeding Content")
+            review_list = [t for t in st.session_state.db if t['Status'] == "Reviewing"]
+            if not review_list: st.info("ไม่มีงานรอตรวจ")
+            for t in review_list:
+                with st.expander(f"📌 {t['Topic']} (โดย {t['PIC']})", expanded=True):
+                    st.write(f"จะโพสต์ที่กลุ่ม: **{t['FB_Group_Name']}**")
+                    t['Draft'] = st.text_area("แก้ไขข้อความ:", value=t['Draft'], key=f"boss_{t['id']}")
+                    if st.button("✅ Approve", key=f"app_{t['id']}"):
+                        t['Status'] = "Approved"
+                        save_data("tasks", st.session_state.db)
+                        st.rerun()
+
+        elif menu == "จัดการแอดมิน":
+            st.title("👥 Admin Account Management")
+            with st.form("add_admin"):
+                new_e = st.text_input("Email แอดมิน")
+                new_p = st.text_input("Password")
+                if st.form_submit_button("สร้างบัญชี"):
+                    st.session_state.users_db.append({"email": new_e, "password": new_p, "role": "Admin", "name": new_e.split('@')[0]})
+                    save_data("users", st.session_state.users_db)
+                    st.rerun()
+            st.table(pd.DataFrame(st.session_state.users_db))
+
     else:
         menu = st.sidebar.radio("เมนูแอดมิน:", ["งานที่ได้รับมอบหมาย", "ส่งยอดประจำวัน"])
-
-    # --- 6. [BOSS] หน้าจัดการ Admin Account ---
-    if menu == "จัดการ Admin Account":
-        st.title("👥 จัดการรายชื่อ Admin")
-        with st.expander("➕ เพิ่ม Admin ใหม่", expanded=True):
-            new_e = st.text_input("อีเมลแอดมิน")
-            new_p = st.text_input("กำหนดรหัสผ่าน")
-            if st.button("บันทึกบัญชี"):
-                if new_e and new_p and "@" in new_e:
-                    st.session_state.users_db.append({"email": new_e, "password": new_p, "role": "Admin", "name": new_e.split('@')[0]})
-                    st.success(f"เพิ่ม {new_e} เรียบร้อย!")
-                    st.rerun()
         
-        st.subheader("📋 บัญชีแอดมินทั้งหมด")
-        admin_list = [u for u in st.session_state.users_db if u['role'] == "Admin"]
-        if admin_list:
-            st.table(pd.DataFrame(admin_list)[['email', 'password']])
-            del_target = st.selectbox("เลือกอีเมลที่จะลบ:", [u['email'] for u in admin_list])
-            if st.button("ลบบัญชีที่เลือก"):
-                st.session_state.users_db = [u for u in st.session_state.users_db if u['email'] != del_target]
-                st.success(f"ลบ {del_target} สำเร็จ")
-                st.rerun()
-        else:
-            st.info("ยังไม่มีแอดมินในระบบ")
-
-    # --- 7. [BOSS] หน้ามอบหมายงานใหม่ ---
-    elif menu == "มอบหมายงานใหม่":
-        st.title("🎯 Assign New Task")
-        with st.form("new_task"):
-            nt = st.text_input("หัวข้อ (Topic)")
-            ng = st.text_area("แนวทาง (Guideline)")
-            admins = [u['email'] for u in st.session_state.users_db if u['role'] == "Admin"]
-            np = st.selectbox("มอบหมายให้แอดมินคนไหน:", admins if admins else ["ยังไม่มีแอดมินในระบบ"])
-            if st.form_submit_button("Deploy Task") and admins:
-                st.session_state.db.append({
-                    "id": len(st.session_state.db)+1, "Topic": nt, "Guide": ng, "PIC": np,
-                    "FB_Group": "", "Draft": "", "Status": "Pending", "Post_Count": 0, "Comment_Count": 0
-                })
-                st.success("จ่ายงานสำเร็จ!")
-
-    # --- 8. [BOSS] หน้าตรวจงาน Approval ---
-    elif menu == "ตรวจงาน (Approval)":
-        st.title("👀 Approve Seeding Content")
-        review_tasks = [t for t in st.session_state.db if t['Status'] == "Reviewing"]
-        if not review_tasks: st.info("ไม่มีงานรอตรวจในขณะนี้")
-        for t in review_tasks:
-            with st.expander(f"📌 {t['Topic']} (โดย {t['PIC']})", expanded=True):
-                st.write(f"**กลุ่มที่จะโพสต์:** {t['FB_Group']}")
-                # หัวหน้าแก้ไขข้อความแอดมินได้
-                t['Draft'] = st.text_area("ร่างข้อความ (แก้ไขได้):", value=t['Draft'], key=f"boss_ed_{t['id']}")
-                c1, c2 = st.columns(2)
-                if c1.button("✅ Approve", key=f"app_{t['id']}"):
-                    t['Status'] = "Approved"
-                    st.rerun()
-                if c2.button("❌ Reject (ตีกลับไปแก้)", key=f"rej_{t['id']}"):
-                    t['Status'] = "Pending"
-                    st.rerun()
-
-    # --- 9. [ADMIN] งานที่ได้รับมอบหมาย ---
-    elif menu == "งานที่ได้รับมอบหมาย":
-        st.title("📥 My Assigned Tasks")
-        my_jobs = [t for t in st.session_state.db if t['PIC'] == st.session_state.current_user]
-        if not my_jobs: st.info("ยังไม่มีงานที่คุณได้รับมอบหมาย")
-        for t in my_jobs:
-            with st.expander(f"📌 {t['Topic']} - สถานะ: {t['Status']}", expanded=True):
-                if t['Status'] == "Pending":
-                    st.write(f"**แนวทาง:** {t['Guide']}")
-                    if st.button("✨ Draft with AI", key=f"ai_{t['id']}"):
-                        res = call_seeding_agent(t['Topic'], t['Guide'])
-                        if res: st.session_state[f"res_list_{t['id']}"] = res
+        if menu == "งานที่ได้รับมอบหมาย":
+            st.title("📥 My Assigned Tasks")
+            my_jobs = [t for t in st.session_state.db if t['PIC'] == st.session_state.current_user]
+            for t in my_jobs:
+                with st.expander(f"📌 {t['Topic']} | สถานะ: {t['Status']}", expanded=True):
+                    if t['Status'] == "Pending":
+                        channel_names = [c['group_name'] for c in st.session_state.channels]
+                        selected_g = st.selectbox("เลือกกลุ่ม FB:", channel_names, key=f"g_{t['id']}")
+                        g_info = next((c for c in st.session_state.channels if c['group_name'] == selected_g), None)
+                        
+                        t['FB_Group_Name'] = selected_g
+                        t['FB_Group_URL'] = g_info['group_url'] if g_info else ""
+                        
+                        if st.button("✨ Draft with AI", key=f"ai_{t['id']}"):
+                            st.session_state[f"ai_res_{t['id']}"] = call_ai_agent(t['Topic'], t['Guide'])
+                        
+                        if f"ai_res_{t['id']}" in st.session_state:
+                            for i, msg in enumerate(st.session_state[f"ai_res_{t['id']}"]):
+                                if st.button(f"เลือกแบบที่ {i+1}", key=f"sel_{t['id']}_{i}"):
+                                    t['Draft'] = msg
+                                    st.rerun()
+                        
+                        t['Draft'] = st.text_area("ร่างข้อความสุดท้าย:", value=t['Draft'], key=f"ed_{t['id']}")
+                        if st.button("ส่งให้หัวหน้าตรวจ", key=f"sub_{t['id']}"):
+                            t['Status'] = "Reviewing"
+                            save_data("tasks", st.session_state.db)
+                            st.rerun()
                     
-                    if f"res_list_{t['id']}" in st.session_state:
-                        for i, msg in enumerate(st.session_state[f"res_list_{t['id']}"]):
-                            if st.button(f"เลือกแบบที่ {i+1}", key=f"sel_{t['id']}_{i}"):
-                                st.session_state[f"ed_{t['id']}"] = msg
-                                t['Draft'] = msg
-                                st.rerun()
-                    
-                    t['FB_Group'] = st.text_input("ระบุชื่อ Facebook Group ที่จะไปโพสต์:", value=t['FB_Group'], key=f"grp_{t['id']}")
-                    t['Draft'] = st.text_area("ข้อความที่จะส่งตรวจ:", key=f"ed_{t['id']}", value=t['Draft'])
-                    if st.button("ส่งให้หัวหน้าตรวจ", key=f"sub_{t['id']}", disabled=not (t['Draft'] and t['FB_Group'])):
-                        t['Status'] = "Reviewing"
-                        st.rerun()
-                elif t['Status'] == "Approved":
-                    st.success("✅ อนุมัติแล้ว! ก๊อปปี้ไปโพสต์ได้เลย:")
-                    st.code(t['Draft'])
+                    elif t['Status'] == "Approved":
+                        st.success("✅ หัวหน้าอนุมัติแล้ว! ก๊อปปี้ไปโพสต์ได้เลย")
+                        st.code(t['Draft'])
+                        st.markdown(f'<a href="{t["FB_Group_URL"]}" target="_blank"><button style="background-color: #4267B2; color: white; border: none; padding: 12px 24px; border-radius: 12px; cursor: pointer; width: 100%;">เปิดกลุ่ม {t["FB_Group_Name"]} เพื่อโพสต์ 🚀</button></a>', unsafe_allow_html=True)
 
-    # --- 10. [ADMIN] ส่งยอดประจำวัน ---
-    elif menu == "ส่งยอดประจำวัน":
-        st.title("📊 Report Daily Counts")
-        done_jobs = [t for t in st.session_state.db if t['PIC'] == st.session_state.current_user and t['Status'] == "Approved"]
-        for t in done_jobs:
-            with st.container(border=True):
-                st.write(f"**งาน:** {t['Topic']} | **กลุ่ม:** {t['FB_Group']}")
-                c1, c2 = st.columns(2)
-                t['Post_Count'] = c1.number_input("จำนวนโพสต์", value=t['Post_Count'], key=f"pc_{t['id']}")
-                t['Comment_Count'] = c2.number_input("จำนวนคอมเมนต์", value=t['Comment_Count'], key=f"cc_{t['id']}")
-
-    # --- 11. Dashboard (Dashboard สำหรับ Boss) ---
-    elif menu == "Dashboard (ภาพรวม)":
-        st.title("📋 สรุปผลการทำงาน")
-        if st.session_state.db:
-            df = pd.DataFrame(st.session_state.db)
-            st.dataframe(df[['PIC', 'Topic', 'FB_Group', 'Status', 'Post_Count', 'Comment_Count']])
-            col1, col2 = st.columns(2)
-            col1.metric("ยอดโพสต์รวม", df['Post_Count'].sum())
-            col2.metric("ยอดคอมเมนต์รวม", df['Comment_Count'].sum())
-        else: st.info("ยังไม่มีข้อมูลงาน")
+        elif menu == "ส่งยอดประจำวัน":
+            st.title("📊 ปิดยอดสรุปวัน")
+            done_jobs = [t for t in st.session_state.db if t['PIC'] == st.session_state.current_user and t['Status'] == "Approved"]
+            for t in done_jobs:
+                with st.container(border=True):
+                    st.write(f"**งาน:** {t['Topic']} | **กลุ่ม:** {t['FB_Group_Name']}")
+                    c1, c2 = st.columns(2)
+                    t['Post_Count'] = c1.number_input("จำนวนโพสต์", value=t['Post_Count'], key=f"pc_{t['id']}")
+                    t['Comment_Count'] = c2.number_input("จำนวนคอมเมนต์", value=t['Comment_Count'], key=f"cc_{t['id']}")
+            if st.button("บันทึกตัวเลขยอดรวม"):
+                save_data("tasks", st.session_state.db)
+                st.success("บันทึกยอดลงระบบแล้ว!")
 
     if st.sidebar.button("Sign Out"):
         st.session_state.logged_in = False
