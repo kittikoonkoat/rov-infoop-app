@@ -4,29 +4,31 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import requests
 import re
+import json
 
 # ==========================================
-# 1. การเชื่อมต่อ GOOGLE SHEETS (แก้ไขจุดที่ทำให้เกิด Error)
+# 1. การเชื่อมต่อ GOOGLE SHEETS (แก้ไขจุดที่เกิด Error)
 # ==========================================
 
 def init_connection():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     try:
-        # ดึงข้อมูลจาก Secrets
+        # ดึงข้อมูลจาก Secrets ที่คุณตั้งค่าไว้
         creds_info = st.secrets["gcp_service_account"]
         
-        # แก้ไขปัญหา "Cannot convert str to a seekable bit stream"
-        # โดยการจัดการ \n ใน private_key ให้ถูกต้อง
-        if isinstance(creds_info, st.runtime.secrets.AttrDict):
-            creds_dict = dict(creds_info)
-        else:
-            creds_dict = creds_info
+        # แปลงโครงสร้างจาก AttrDict เป็น Dictionary ปกติ
+        creds_dict = dict(creds_info)
             
-        # บรรทัดสำคัญ: แก้ไขรหัส \n ที่ถูกมองว่าเป็น String
-        creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+        # บรรทัดสำคัญ: แก้ไขรหัส \n ที่ถูกมองว่าเป็นตัวอักษร ให้กลายเป็นการขึ้นบรรทัดใหม่จริง
+        # ป้องกัน Error "Cannot convert str to a seekable bit stream"
+        if "private_key" in creds_dict:
+            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
         
+        # ใช้ from_json_keyfile_dict เพื่อรับค่า Dictionary โดยตรง
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
+        
+        # ตรวจสอบชื่อไฟล์ให้ตรงกับ "RoV_Seeding_DB"
         return client.open("RoV_Seeding_DB")
     except Exception as e:
         st.error(f"❌ เชื่อมต่อ Google Sheets ไม่ได้: {e}")
@@ -39,9 +41,9 @@ def sync_data():
             st.session_state.db = sh.worksheet("tasks").get_all_records()
             st.session_state.users_db = sh.worksheet("users").get_all_records()
             st.session_state.channels = sh.worksheet("channels").get_all_records()
-            st.sidebar.success("🔄 ข้อมูลอัปเดตแล้ว")
+            st.sidebar.success("🔄 ซิงค์ข้อมูลสำเร็จ")
         except Exception as e:
-            st.error(f"ไม่พบแผ่นงาน (Worksheet): {e}")
+            st.error(f"ไม่พบ Worksheet: {e}")
 
 def save_data(worksheet_name, data_list):
     sh = init_connection()
@@ -53,10 +55,10 @@ def save_data(worksheet_name, data_list):
                 df = pd.DataFrame(data_list)
                 ws.update([df.columns.values.tolist()] + df.values.tolist())
         except Exception as e:
-            st.error(f"บันทึกข้อมูลไม่สำเร็จ: {e}")
+            st.error(f"บันทึกข้อมูลล้มเหลว: {e}")
 
 # ==========================================
-# 2. ระบบ AI ดึง 10 ตัวเลือก
+# 2. ระบบ AI (ดึง 10 ตัวเลือก)
 # ==========================================
 
 def call_ai_agent(topic, guide):
@@ -84,7 +86,7 @@ def call_ai_agent(topic, guide):
         elif 'text' in res:
             raw_text = res.get('text', "")
             
-        # แยกข้อความเป็นลิสต์ 10 อย่าง
+        # แยกข้อความ 10 ชุด (รองรับการขึ้นบรรทัดใหม่และเลขข้อ)
         options = [l.strip() for l in re.split(r'\n|\d+\.', str(raw_text)) if len(l.strip()) > 5]
         return options[:10] if options else ["AI ส่งข้อมูลผิดรูปแบบ ลองกดใหม่อีกครั้งนะคะ"]
     except Exception as e:
@@ -120,21 +122,20 @@ if not st.session_state.logged_in:
 else:
     st.sidebar.title(f"👤 {st.session_state.current_user}")
     
+    # เมนูแอดมิน
     if st.session_state.user_role == "Admin":
-        st.title("📥 My Assigned Tasks")
+        st.title("📥 งานที่ได้รับมอบหมาย")
         my_jobs = [t for t in st.session_state.db if t['PIC'] == st.session_state.current_user]
         
         for t in my_jobs:
             with st.expander(f"📌 {t['Topic']} | {t['Status']}", expanded=True):
                 if t['Status'] == "Pending":
-                    # ปุ่ม Draft AI
                     if st.button("✨ Draft with AI (10 แบบ)", key=f"ai_{t['id']}"):
-                        with st.spinner("กำลังร่างข้อความ 10 แบบ..."):
+                        with st.spinner("กะเทยกำลังคิดข้อความให้เลือกนะคะ..."):
                             st.session_state[f"ai_options_{t['id']}"] = call_ai_agent(t['Topic'], t['Guide'])
                     
-                    # แสดงผลตัวเลือก 10 แบบ
                     if f"ai_options_{t['id']}" in st.session_state:
-                        st.info("🤖 เลือกข้อความที่ต้องการ:")
+                        st.write("🤖 เลือกข้อความที่โดนใจ:")
                         opts = st.session_state[f"ai_options_{t['id']}"]
                         for i, msg in enumerate(opts):
                             if st.button(f"✅ แบบที่ {i+1}: {msg[:60]}...", key=f"btn_{t['id']}_{i}", use_container_width=True):
@@ -142,7 +143,7 @@ else:
                                 st.rerun()
                     
                     t['Draft'] = st.text_area("ร่างข้อความสุดท้าย:", value=t['Draft'], key=f"ed_{t['id']}", height=150)
-                    if st.button("ส่งให้หัวหน้าตรวจ", key=f"sub_{t['id']}", use_container_width=True):
+                    if st.button("ส่งงาน", key=f"sub_{t['id']}", use_container_width=True):
                         t['Status'] = "Reviewing"
                         save_data("tasks", st.session_state.db)
                         st.rerun()
