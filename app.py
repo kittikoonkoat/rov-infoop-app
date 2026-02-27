@@ -7,28 +7,28 @@ import re
 import json
 
 # ==========================================
-# 1. การเชื่อมต่อ GOOGLE SHEETS (แก้ไขจุดที่เกิด Error)
+# 1. แก้ไขส่วนการเชื่อมต่อ GOOGLE SHEETS
 # ==========================================
 
 def init_connection():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     try:
-        # ดึงข้อมูลจาก Secrets ที่คุณตั้งค่าไว้
+        # ดึงข้อมูลจาก Secrets
         creds_info = st.secrets["gcp_service_account"]
         
-        # แปลงโครงสร้างจาก AttrDict เป็น Dictionary ปกติ
+        # แปลงโครงสร้างเป็น Dictionary ปกติ
         creds_dict = dict(creds_info)
             
-        # บรรทัดสำคัญ: แก้ไขรหัส \n ที่ถูกมองว่าเป็นตัวอักษร ให้กลายเป็นการขึ้นบรรทัดใหม่จริง
-        # ป้องกัน Error "Cannot convert str to a seekable bit stream"
+        # บรรทัดแก้ไขปัญหา: จัดการ \n ให้กลายเป็นการขึ้นบรรทัดใหม่จริงๆ
+        # วิธีนี้จะแก้ Error "Cannot convert str to a seekable bit stream"
         if "private_key" in creds_dict:
             creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
         
-        # ใช้ from_json_keyfile_dict เพื่อรับค่า Dictionary โดยตรง
+        # ใช้คำสั่งนี้เพื่อสร้าง Credentials จาก Dictionary
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         
-        # ตรวจสอบชื่อไฟล์ให้ตรงกับ "RoV_Seeding_DB"
+        # ตรวจสอบชื่อไฟล์ Google Sheets ของคุณ
         return client.open("RoV_Seeding_DB")
     except Exception as e:
         st.error(f"❌ เชื่อมต่อ Google Sheets ไม่ได้: {e}")
@@ -41,7 +41,7 @@ def sync_data():
             st.session_state.db = sh.worksheet("tasks").get_all_records()
             st.session_state.users_db = sh.worksheet("users").get_all_records()
             st.session_state.channels = sh.worksheet("channels").get_all_records()
-            st.sidebar.success("🔄 ซิงค์ข้อมูลสำเร็จ")
+            st.sidebar.success("🔄 ข้อมูลซิงค์สำเร็จ")
         except Exception as e:
             st.error(f"ไม่พบ Worksheet: {e}")
 
@@ -86,7 +86,7 @@ def call_ai_agent(topic, guide):
         elif 'text' in res:
             raw_text = res.get('text', "")
             
-        # แยกข้อความ 10 ชุด (รองรับการขึ้นบรรทัดใหม่และเลขข้อ)
+        # แยกข้อความเป็นลิสต์ 10 ข้อความ
         options = [l.strip() for l in re.split(r'\n|\d+\.', str(raw_text)) if len(l.strip()) > 5]
         return options[:10] if options else ["AI ส่งข้อมูลผิดรูปแบบ ลองกดใหม่อีกครั้งนะคะ"]
     except Exception as e:
@@ -135,15 +135,15 @@ else:
                             st.session_state[f"ai_options_{t['id']}"] = call_ai_agent(t['Topic'], t['Guide'])
                     
                     if f"ai_options_{t['id']}" in st.session_state:
-                        st.write("🤖 เลือกข้อความที่โดนใจ:")
+                        st.info("🤖 เลือกข้อความที่โดนใจ (คลิกเพื่อเลือก):")
                         opts = st.session_state[f"ai_options_{t['id']}"]
                         for i, msg in enumerate(opts):
-                            if st.button(f"✅ แบบที่ {i+1}: {msg[:60]}...", key=f"btn_{t['id']}_{i}", use_container_width=True):
+                            if st.button(f"แบบที่ {i+1}: {msg[:60]}...", key=f"btn_{t['id']}_{i}", use_container_width=True):
                                 t['Draft'] = msg
                                 st.rerun()
                     
                     t['Draft'] = st.text_area("ร่างข้อความสุดท้าย:", value=t['Draft'], key=f"ed_{t['id']}", height=150)
-                    if st.button("ส่งงาน", key=f"sub_{t['id']}", use_container_width=True):
+                    if st.button("ส่งให้หัวหน้าตรวจ", key=f"sub_{t['id']}", use_container_width=True):
                         t['Status'] = "Reviewing"
                         save_data("tasks", st.session_state.db)
                         st.rerun()
