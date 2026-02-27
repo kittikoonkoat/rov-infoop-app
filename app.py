@@ -107,7 +107,7 @@ def call_seeding_agent(topic, guide, persona):
 # --- 4. Navigation & Logic ---
 if not st.session_state.logged_in:
     # Clean Login Interface
-    st.markdown("<br><h1 style='text-align: center;'>✨ Sign in to RoV Seeding</h1>", unsafe_allow_html=True)
+    st.markdown("<br><h1 style='text-align: center;'>✨ Sign in to YA-MO-Project</h1>", unsafe_allow_html=True)
     _, col, _ = st.columns([1, 1.4, 1])
     with col:
         with st.form("login_ui"):
