@@ -1,56 +1,75 @@
 import streamlit as st
 import pandas as pd
 import requests
-from datetime import datetime
 
-# --- 1. iOS/macOS Light Mode UI Styling ---
-st.set_page_config(page_title="RoV Seeding Command Center", layout="wide")
+# --- 1. Gemini Dark Theme UI Styling ---
+st.set_page_config(page_title="RoV Seeding - Gemini Edition", layout="wide")
 
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap');
     
-    /* Global Styles */
-    .stApp { background-color: #FFFFFF; color: #1d1d1f; }
-    html, body, [class*="css"] { font-family: 'Inter', -apple-system, sans-serif; }
-
-    /* Sidebar - macOS Style */
-    [data-testid="stSidebar"] { background-color: #F2F2F7 !important; border-right: 1px solid #D2D2D7; }
+    /* พื้นหลังสีเทาเข้มแบบ Gemini */
+    .stApp {
+        background-color: #131314;
+        color: #E3E3E3;
+    }
     
-    /* Input Fields */
-    .stTextInput input, .stTextArea textarea, .stSelectbox div[data-baseweb="select"] {
-        background-color: #FFFFFF !important;
-        color: #1d1d1f !important;
-        border: 1px solid #D2D2D7 !important;
-        border-radius: 10px !important;
+    html, body, [class*="css"] { 
+        font-family: 'Inter', sans-serif; 
     }
 
-    /* Apple Style Buttons */
+    /* Sidebar แบบ Gemini */
+    [data-testid="stSidebar"] {
+        background-color: #1E1F20 !important;
+        border-right: 1px solid #333537;
+    }
+
+    /* Input Box ทรงมนแบบช่องแชท AI */
+    .stTextInput input, .stTextArea textarea, .stSelectbox div[data-baseweb="select"] {
+        background-color: #1E1F20 !important;
+        color: #E3E3E3 !important;
+        border: 1px solid #444746 !important;
+        border-radius: 18px !important;
+    }
+
+    /* ปุ่มกดสีน้ำเงินไล่เฉด (Gemini Style) */
     div.stButton > button {
-        border-radius: 10px;
-        background-color: #007AFF;
+        border-radius: 20px;
+        background: linear-gradient(90deg, #4285F4, #1A73E8);
         color: white;
         font-weight: 600;
         border: none;
-        padding: 0.5rem 1rem;
-        transition: all 0.2s;
-    }
-    div.stButton > button:hover { background-color: #0056b3; color: white; transform: translateY(-1px); }
-
-    /* Cards & Containers */
-    div[data-testid="stExpander"] {
-        border-radius: 12px !important;
-        border: 1px solid #E5E5E7 !important;
-        background-color: #FBFBFD !important;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.02) !important;
+        padding: 0.6rem 2rem;
+        transition: all 0.3s ease;
     }
     
-    /* Metrics */
-    [data-testid="stMetricValue"] { color: #007AFF !important; }
+    div.stButton > button:hover {
+        background: #1A73E8;
+        box-shadow: 0 0 15px rgba(66, 133, 244, 0.4);
+        transform: translateY(-1px);
+    }
+
+    /* กล่องขยายความ (Expander) */
+    div[data-testid="stExpander"] {
+        border-radius: 16px !important;
+        border: 1px solid #444746 !important;
+        background-color: #1E1F20 !important;
+    }
+
+    /* หัวข้อและตัวเลขสถิติ */
+    h1, h2, h3 { color: #FFFFFF !important; letter-spacing: -0.5px; }
+    [data-testid="stMetricValue"] { color: #4285F4 !important; font-weight: 700; }
+    
+    /* ปรับแต่งตาราง */
+    .stDataFrame, .stTable {
+        background-color: #1E1F20;
+        border-radius: 12px;
+    }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. Data Storage (Session State) ---
+# --- 2. ระบบจัดการข้อมูลผู้ใช้งาน ---
 if 'users' not in st.session_state:
     st.session_state.users = {
         "kittikoon.k@garena.com": {"name": "คุณกิตติคุณ", "role": "Admin", "pass": "garena123"},
@@ -65,13 +84,12 @@ if 'db' not in st.session_state:
 
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
-    st.session_state.user_info = None
 
-# --- 3. API Connector ---
+# --- 3. ฟังก์ชันเรียกใช้งาน API (อัปเดต Key แล้ว) ---
 def call_seeding_agent(topic, guide, persona):
     api_url = "https://ai.insea.io/api/workflows/15905/run"
-    # บรรทัดข้างล่างนี้ รบกวนคุณกิตติคุณนำ API Key มาใส่แทนนะครับ
-    api_key = "jBF0ri1P76TwxBob6MlJ12chr4ch2pEL" 
+    # อัปเดต API Key ของคุณเรียบร้อยแล้ว
+    api_key = "QaddR42ehoje6VK9ZxITB9ZFS5C2mr1f" 
     
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -80,22 +98,24 @@ def call_seeding_agent(topic, guide, persona):
     payload = {
         "inputs": {"Topic": topic, "Guide": guide, "Persona": persona},
         "response_mode": "blocking",
-        "user": "garena_user"
+        "user": "garena_seeding_app"
     }
     try:
         response = requests.post(api_url, json=payload, headers=headers)
         result = response.json()
+        # ดึงข้อความจาก Node End (ตัวแปรชื่อ text)
         raw_text = result.get('data', {}).get('outputs', {}).get('text', "")
+        # แยกข้อความออกเป็นลิสต์บรรทัด
         return [line.strip() for line in raw_text.split('\n') if len(line.strip()) > 5]
     except Exception as e:
-        return [f"Error: {str(e)}"]
+        return [f"การเชื่อมต่อผิดพลาด: {str(e)}"]
 
-# --- 4. Authentication Flow ---
+# --- 4. ระบบ Login ---
 if not st.session_state.logged_in:
-    st.title(" RoV Seeding Login")
+    st.title("✨ RoV Seeding Login")
     with st.container():
-        st.write("Login with your @garena.com account")
-        email_input = st.text_input("Email")
+        st.write("เข้าสู่ระบบด้วยอีเมล @garena.com")
+        email_input = st.text_input("Garena Email")
         pass_input = st.text_input("Password", type="password")
         if st.button("Login"):
             if email_input in st.session_state.users and st.session_state.users[email_input]["pass"] == pass_input:
@@ -104,110 +124,85 @@ if not st.session_state.logged_in:
                 st.session_state.user_email = email_input
                 st.rerun()
             else:
-                st.error("Invalid email or password")
+                st.error("อีเมลหรือรหัสผ่านไม่ถูกต้อง")
     st.stop()
 
-# --- 5. Navigation ---
+# --- 5. เมนูและการนำทาง ---
 user = st.session_state.user_info
-st.sidebar.title(f" {user['name']}")
-st.sidebar.caption(f"Logged in as: {user['role']}")
-
-if st.sidebar.button("Logout"):
+st.sidebar.title(f"✨ สวัสดี, {user['name']}")
+if st.sidebar.button("Log out"):
     st.session_state.logged_in = False
     st.rerun()
 
 menu_options = ["PIC Workspace"]
 if user['role'] == "Admin":
-    menu_options = ["Admin Control Center", "PIC Workspace", "Daily Report", " User Management"]
+    menu_options = ["Admin Control", "PIC Workspace", "Daily Report", " User Management"]
 
-menu = st.sidebar.selectbox("Navigate to", menu_options)
+choice = st.sidebar.selectbox("Navigate to", menu_options)
 
-# --- 6. Page Content ---
+# --- 6. หน้าการทำงานแต่ละเมนู ---
 
-# ---- PAGE: USER MANAGEMENT ----
-if menu == " User Management":
-    st.title(" User Management")
-    
-    with st.expander("➕ Add New Team Member"):
-        with st.form("new_user"):
-            u_email = st.text_input("Garena Email")
-            u_name = st.text_input("Full Name")
-            u_pass = st.text_input("Initial Password")
-            u_role = st.selectbox("Role", ["PIC", "Admin"])
-            if st.form_submit_button("Save User"):
-                if "@garena.com" in u_email:
-                    st.session_state.users[u_email] = {"name": u_name, "role": u_role, "pass": u_pass}
-                    st.success(f"Added {u_name} to the team!")
-                    st.rerun()
-                else:
-                    st.error("Email must be @garena.com")
+# ---- หน้าจัดการ User (เฉพาะ Admin) ----
+if choice == " User Management":
+    st.title("👥 User Management")
+    with st.expander("➕ เพิ่มสมาชิกใหม่"):
+        with st.form("new_user_form"):
+            u_email = st.text_input("Email (@garena.com)")
+            u_name = st.text_input("ชื่อ-นามสกุล")
+            u_pass = st.text_input("รหัสผ่านเริ่มต้น")
+            u_role = st.selectbox("สิทธิ์", ["PIC", "Admin"])
+            if st.form_submit_button("บันทึก"):
+                st.session_state.users[u_email] = {"name": u_name, "role": u_role, "pass": u_pass}
+                st.success(f"เพิ่ม {u_name} เรียบร้อย!")
+                st.rerun()
+    st.subheader("สมาชิกทั้งหมด")
+    st.table(pd.DataFrame([{"Name": v['name'], "Email": k, "Role": v['role']} for k, v in st.session_state.users.items()]))
 
-    st.subheader("Current Members")
-    df_users = pd.DataFrame([{"Email": k, "Name": v['name'], "Role": v['role']} for k, v in st.session_state.users.items()])
-    st.table(df_users)
-
-# ---- PAGE: ADMIN CONTROL CENTER ----
-elif menu == "Admin Control Center":
-    st.title("👨‍💻 Admin Control Center")
-    with st.form("new_task"):
-        st.subheader("Assign New Seeding Task")
+# ---- หน้าสั่งงาน (Admin Control) ----
+elif choice == "Admin Control":
+    st.title("👨‍💼 Admin Control")
+    with st.form("task_form"):
+        st.subheader("มอบหมายงานใหม่")
         col1, col2 = st.columns(2)
-        t_topic = col1.text_input("Topic")
-        t_pic = col2.selectbox("Assign to PIC", [v['name'] for v in st.session_state.users.values() if v['role']=="PIC"])
-        t_guide = st.text_area("Message Guide / Angle")
-        t_url = st.text_input("Target URL (Group/Page)")
-        if st.form_submit_button("Deploy Task"):
+        t_topic = col1.text_input("หัวข้อ (Topic)")
+        t_pic = col2.selectbox("มอบหมายให้", [v['name'] for v in st.session_state.users.values() if v['role']=="PIC"])
+        t_guide = st.text_area("Message Guide")
+        t_url = st.text_input("Target URL")
+        if st.form_submit_button("Assign Task"):
             st.session_state.db.append({
                 "id": len(st.session_state.db)+1, "Topic": t_topic, "PIC": t_pic,
                 "Guide": t_guide, "Target": t_url, "Status": "Waiting", "Draft": ""
             })
-            st.success("Task assigned successfully!")
+            st.success("ส่งงานสำเร็จ!")
 
-    st.divider()
-    st.subheader("🕒 Review Pending Drafts")
-    for t in st.session_state.db:
-        if t['Status'] == "Pending":
-            with st.expander(f"Review: {t['Topic']} by {t['PIC']}"):
-                st.info(t['Draft'])
-                if st.button("Approve & Finalize", key=f"app_{t['id']}"):
-                    t['Status'] = "Approved"
-                    st.rerun()
-
-# ---- PAGE: PIC WORKSPACE ----
-elif menu == "PIC Workspace":
+# ---- หน้าคนทำงาน (PIC Workspace) ----
+elif choice == "PIC Workspace":
     st.title("📱 PIC Workspace")
-    # Admin sees all, PIC sees only their tasks
     my_tasks = [t for t in st.session_state.db if t['PIC'] == user['name'] or user['role'] == "Admin"]
     
-    if not my_tasks:
-        st.write("No tasks assigned yet. Chill out! ☕️")
-    
     for t in my_tasks:
-        with st.expander(f"📌 {t['Topic']} - Status: {t['Status']}"):
+        with st.expander(f"📌 งาน: {t['Topic']} ({t['Status']})"):
             st.write(f"**Guide:** {t['Guide']}")
-            
-            if st.button("✨ Ask AI Agent to Draft", key=f"ai_{t['id']}"):
-                with st.spinner('AI is thinking...'):
+            if st.button("✨ ให้ AI ช่วยร่างข้อความ", key=f"ai_{t['id']}"):
+                with st.spinner('Gemini Agent กำลังร่างข้อความ...'):
                     results = call_seeding_agent(t['Topic'], t['Guide'], user['name'])
                     st.session_state[f"res_{t['id']}"] = results
             
             if f"res_{t['id']}" in st.session_state:
-                st.write("**Choose a version:**")
                 for i, msg in enumerate(st.session_state[f"res_{t['id']}"]):
-                    st.caption(f"Version {i+1}")
-                    st.write(msg)
-                    if st.button("Select this version", key=f"sel_{t['id']}_{i}"):
+                    st.info(msg)
+                    if st.button(f"เลือกแบบที่ {i+1}", key=f"sel_{t['id']}_{i}"):
                         t['Draft'] = msg
             
-            t['Draft'] = st.text_area("Final Polish", value=t['Draft'], key=f"ed_{t['id']}")
-            if st.button("Submit for Approval", key=f"sub_{t['id']}"):
-                t['Status'] = "Pending"
+            t['Draft'] = st.text_area("แก้ไข/สรุปข้อความสุดท้าย", value=t['Draft'], key=f"ed_{t['id']}")
+            if st.button("ส่งให้ Admin ตรวจ", key=f"sub_{t['id']}"):
+                t['Status'] = "Pending Approval"
                 st.rerun()
 
-# ---- PAGE: DAILY REPORT ----
-elif menu == "Daily Report":
+# ---- หน้าสรุปงาน (Daily Report) ----
+elif choice == "Daily Report":
     st.title("📊 Daily Summary")
     if st.session_state.db:
         st.dataframe(pd.DataFrame(st.session_state.db), use_container_width=True)
     else:
-        st.write("System is empty.")
+        st.write("ยังไม่มีข้อมูลงาน")
