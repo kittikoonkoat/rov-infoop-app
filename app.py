@@ -6,18 +6,20 @@ import requests
 import re
 
 # ==========================================
-# 1. GOOGLE SHEETS CONNECTION SETUP
+# 1. GOOGLE SHEETS CONNECTION SETUP (แก้ไขเพื่อใช้บน Cloud)
 # ==========================================
 
 def init_connection():
-    """เชื่อมต่อกับ Google Sheets API"""
+    """เชื่อมต่อกับ Google Sheets ผ่าน Streamlit Secrets"""
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     try:
-        creds = ServiceAccountCredentials.from_json_keyfile_name("service_account.json", scope)
+        # ดึงข้อมูลจาก Secrets แทนการอ่านไฟล์ .json
+        creds_dict = st.secrets["gcp_service_account"]
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         return client.open("RoV_Seeding_DB")
     except Exception as e:
-        st.error(f"ไม่พบไฟล์กุญแจหรือเชื่อมต่อไม่ได้: {e}")
+        st.error(f"เชื่อมต่อ Google Sheets ไม่ได้: {e}")
         return None
 
 def sync_data():
@@ -40,7 +42,7 @@ def save_data(worksheet_name, data_list):
             ws.update([df.columns.values.tolist()] + df.values.tolist())
 
 # ==========================================
-# 2. AI AGENT CONNECTOR (INSEA AI) - แก้ไขแล้ว
+# 2. AI AGENT CONNECTOR (INSEA AI)
 # ==========================================
 
 def call_ai_agent(topic, guide):
@@ -61,14 +63,12 @@ def call_ai_agent(topic, guide):
     try:
         res = requests.post(api_url, json=payload, headers=headers, timeout=60).json()
         
-        # ส่วนแก้ไข: ดึงข้อมูลให้ถูกโครงสร้าง
         raw = ""
         if 'data' in res and 'outputs' in res['data']:
             raw = res['data']['outputs'].get('text', "")
         elif 'text' in res:
             raw = res.get('text', "")
 
-        # แยกบรรทัดและกรองบรรทัดว่าง
         lines = [l.strip() for l in str(raw).split('\n') if len(l.strip()) > 2]
         return lines if lines else ["AI ยังคิดไม่ออก ลองกดใหม่อีกครั้งนะคะ"]
         
