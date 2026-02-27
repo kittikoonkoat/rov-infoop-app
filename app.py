@@ -1,10 +1,9 @@
 import streamlit as st
 import pandas as pd
 import requests
-import json
 import re
 
-# --- 1. UI Styling: Ultra Luxury Dark ---
+# --- 1. UI Styling: Ultra Clean Gemini Dark ---
 st.set_page_config(page_title="RoV Seeding Portal", layout="wide")
 
 st.markdown("""
@@ -17,18 +16,19 @@ st.markdown("""
     }
     div.stButton > button {
         border-radius: 24px; background: linear-gradient(90deg, #4285F4, #1A73E8);
-        color: white; font-weight: 500; border: none; padding: 0.6rem 2.5rem;
+        color: white; border: none; padding: 0.6rem 2.5rem; font-weight: 500;
     }
     .stInfo { background-color: #041E3C !important; color: #D3E3FD !important; border: 1px solid #0842A0 !important; border-radius: 14px !important; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. Database & Session ---
-if 'db' not in st.session_state: st.session_state.db = []
-if 'logged_in' not in st.session_state: st.session_state.logged_in = False
-users = {"kittikoon.k@garena.com": {"name": "คุณกิตติคุณ", "pass": "garena123"}}
+# --- 2. Initialize DB & State ---
+if 'db' not in st.session_state:
+    st.session_state.db = [{"id": 1, "Topic": "Dyadia Buff", "Guide": "อีดอกมาแล้วบัฟเลย เลิศ ลูกรักคนใหม่", "Status": "Waiting", "Draft": ""}]
+if 'logged_in' not in st.session_state:
+    st.session_state.logged_in = False
 
-# --- 3. The "Deep-Parsing" API Logic ---
+# --- 3. API Connector (Fixed Parsing) ---
 def call_seeding_agent(topic, guide):
     api_url = "https://ai.insea.io/api/workflows/15905/run"
     api_key = "cqfxerDagpPV70dwoMQeDSKC9iwCY1EH" #
@@ -42,65 +42,83 @@ def call_seeding_agent(topic, guide):
         response = requests.post(api_url, json=payload, headers=headers, timeout=60)
         res_data = response.json()
         
-        # เจาะเข้าหา 'text' ตามรูป image_1aae73.png
-        raw_text = res_data.get('data', {}).get('outputs', {}).get('text', "")
+        # เจาะเข้าหา 'text'
+        raw_output = res_data.get('data', {}).get('outputs', {}).get('text', "")
         
-        if not raw_text:
-            return []
+        if not raw_output: return []
 
-        # แก้ปัญหาเรื่อง \n ที่มาเป็นตัวอักษร ไม่ใช่บรรทัดใหม่
-        clean_text = str(raw_text).replace('\\n', '\n')
+        # แก้ปัญหา \n ใน JSON String
+        clean_text = str(raw_output).replace('\\n', '\n')
         
-        # แยกข้อความ (หาบรรทัดที่มีข้อความยาวๆ)
+        # แยกบรรทัดและล้างเลขลำดับ
         lines = [l.strip() for l in clean_text.split('\n') if len(l.strip()) > 5]
-        
-        # ลบเลขข้อด้านหน้าออก (เช่น 1., 2.)
         return [re.sub(r'^\d+[\.\:]\s*', '', line) for line in lines]
-    except:
+    except Exception as e:
+        st.error(f"API Error: {str(e)}")
         return []
 
 # --- 4. Main Flow ---
 if not st.session_state.logged_in:
-    st.title("✨ Sign in")
+    st.title("✨ RoV Seeding Portal")
     with st.form("login"):
-        u = st.text_input("Email")
+        u = st.text_input("Garena Email")
         p = st.text_input("Password", type="password")
         if st.form_submit_button("Sign In"):
-            if u in users and users[u]['pass'] == p:
+            if u == "kittikoon.k@garena.com" and p == "garena123":
                 st.session_state.logged_in = True
-                st.session_state.user_info = users[u]
                 st.rerun()
+            else: st.error("ข้อมูลไม่ถูกต้อง")
 else:
-    user = st.session_state.user_info
-    st.sidebar.write(f"💎 {user['name']}")
+    # Sidebar Navigation (Force Show All for Admin)
+    st.sidebar.title("💎 Navigation")
+    choice = st.sidebar.radio("Go to:", ["PIC Workspace", "Admin Control", "Daily Report"])
+    
     if st.sidebar.button("Log Out"):
         st.session_state.logged_in = False
         st.rerun()
 
-    st.title("📱 My Workspace")
-    
-    # ตัวอย่างงาน (ถ้ายังไม่มีใน DB)
-    if not st.session_state.db:
-        st.session_state.db.append({"id": 1, "Topic": "Dyadia Buff", "Guide": "อีดอกมาแล้วบัฟเลย เลิศ ลูกรักคนใหม่", "Draft": ""})
+    # --- Page 1: PIC Workspace ---
+    if choice == "PIC Workspace":
+        st.title("📱 PIC Workspace")
+        for t in st.session_state.db:
+            with st.expander(f"📌 {t['Topic']} — {t['Status']}", expanded=True):
+                st.write(f"**Guide:** {t['Guide']}")
+                
+                if st.button("✨ Draft with AI", key=f"ai_{t['id']}"):
+                    with st.spinner('กำลังดึงข้อมูลจาก Insea...'):
+                        res = call_seeding_agent(t['Topic'], t['Guide'])
+                        if res:
+                            st.session_state[f"res_{t['id']}"] = res
+                        else:
+                            st.warning("AI ไม่ตอบกลับ (ตรวจสอบการ Publish ใน Insea นะคร้าบ)")
 
-    for t in st.session_state.db:
-        with st.expander(f"📌 {t['Topic']}", expanded=True):
-            st.write(f"**แนวทาง:** {t['Guide']}")
-            
-            if st.button("✨ Draft with AI", key=f"ai_{t['id']}"):
-                with st.spinner('กำลังเจาะข้อมูล...'):
-                    res = call_seeding_agent(t['Topic'], t['Guide'])
-                    if res:
-                        st.session_state[f"res_{t['id']}"] = res
-                    else:
-                        st.error("AI ยังไม่ส่งข้อมูล (ลองกด Publish ใน Insea อีกรอบครับ)")
+                # FIXED: Syntax Error จากรูป 1b39b3
+                res_key = f"res_{t['id']}"
+                if res_key in st.session_state:
+                    st.markdown("---")
+                    for i, msg in enumerate(st.session_state[res_key]):
+                        st.info(msg)
+                        if st.button(f"เลือกแบบที่ {i+1}", key=f"sel_{t['id']}_{i}"):
+                            t['Draft'] = msg
+                            st.success(f"เลือกข้อความที่ {i+1} แล้ว")
+                
+                t['Draft'] = st.text_area("Final Draft", value=t['Draft'], key=f"ed_{t['id']}", height=100)
+                if st.button("Submit (ยืนยันส่งงาน)", key=f"sub_{t['id']}"):
+                    t['Status'] = "Completed"
+                    st.success("ส่งงานสำเร็จ!")
 
-            if f"res_{t['id']}" in st.session_state:
-                for i, msg in enumerate(st.session_state[f"res_{t['id']}"]):
-                    st.info(msg)
-                    if st.button(f"เลือกแบบที่ {i+1}", key=f"sel_{t['id']}_{i}"):
-                        t['Draft'] = msg
-            
-            t['Draft'] = st.text_area("Final Draft", value=t['Draft'], key=f"ed_{t['id']}")
-            if st.button("ยืนยันส่งงาน", key=f"sub_{t['id']}"):
-                st.success("ส่งงานสำเร็จ!")
+    # --- Page 2: Admin Control ---
+    elif choice == "Admin Control":
+        st.title("👨‍💻 Admin Control")
+        with st.form("new_task"):
+            nt = st.text_input("หัวข้อ (Topic)")
+            ng = st.text_area("แนวทาง (Guideline)")
+            if st.form_submit_button("Assign"):
+                st.session_state.db.append({"id": len(st.session_state.db)+1, "Topic": nt, "Guide": ng, "Status": "Waiting", "Draft": ""})
+                st.success("เพิ่มงานใหม่แล้ว")
+
+    # --- Page 3: Daily Report ---
+    elif choice == "Daily Report":
+        st.title("📊 Daily Summary")
+        if st.session_state.db:
+            st.table(pd.DataFrame(st.session_state.db))
