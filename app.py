@@ -1,36 +1,33 @@
 import streamlit as st
 import pandas as pd
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
 import requests
 import re
 import json
 
 # ==========================================
-# 1. แก้ไขส่วนการเชื่อมต่อ GOOGLE SHEETS
+# 1. การเชื่อมต่อ GOOGLE SHEETS (แก้ไขจุดที่เกิด Error)
 # ==========================================
 
 def init_connection():
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     try:
-        # ดึงข้อมูลจาก Secrets
+        # ดึงข้อมูลจาก Secrets ที่คุณตั้งค่าไว้
         creds_info = st.secrets["gcp_service_account"]
-        
-        # แปลงโครงสร้างเป็น Dictionary ปกติ
         creds_dict = dict(creds_info)
             
-        # บรรทัดแก้ไขปัญหา: จัดการ \n ให้กลายเป็นการขึ้นบรรทัดใหม่จริงๆ
-        # วิธีนี้จะแก้ Error "Cannot convert str to a seekable bit stream"
+        # จัดการ \n ใน private_key ให้ถูกประเภทข้อมูล
         if "private_key" in creds_dict:
             creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
         
-        # ใช้คำสั่งนี้เพื่อสร้าง Credentials จาก Dictionary
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        # ใช้ google.oauth2.service_account แทนเพื่อเลี่ยง Error 'seekable bit stream'
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
         client = gspread.authorize(creds)
         
-        # ตรวจสอบชื่อไฟล์ Google Sheets ของคุณ
         return client.open("RoV_Seeding_DB")
     except Exception as e:
+        # แสดง Error บนหน้าจอ
         st.error(f"❌ เชื่อมต่อ Google Sheets ไม่ได้: {e}")
         return None
 
@@ -41,7 +38,7 @@ def sync_data():
             st.session_state.db = sh.worksheet("tasks").get_all_records()
             st.session_state.users_db = sh.worksheet("users").get_all_records()
             st.session_state.channels = sh.worksheet("channels").get_all_records()
-            st.sidebar.success("🔄 ข้อมูลซิงค์สำเร็จ")
+            st.sidebar.success("🔄 ซิงค์ข้อมูลสำเร็จ")
         except Exception as e:
             st.error(f"ไม่พบ Worksheet: {e}")
 
@@ -58,7 +55,7 @@ def save_data(worksheet_name, data_list):
             st.error(f"บันทึกข้อมูลล้มเหลว: {e}")
 
 # ==========================================
-# 2. ระบบ AI (ดึง 10 ตัวเลือก)
+# 2. ระบบ AI (แก้ปัญหาคิดข้อความไม่ออก)
 # ==========================================
 
 def call_ai_agent(topic, guide):
@@ -66,11 +63,12 @@ def call_ai_agent(topic, guide):
     api_key = "cqfxerDagpPV70dwoMQeDSKC9iwCY1EH" 
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     
+    # ส่ง Prompt ให้ชัดเจนเพื่อป้องกันข้อความ "AI คิดไม่ออก"
     payload = {
         "inputs": {
             "Topic": str(topic), 
             "Guide": str(guide), 
-            "Persona": "แอดมินกะเทย RoV ร่างข้อความมา 10 แบบ ห้ามใส่เลขข้อ ให้ขึ้นบรรทัดใหม่แยกกันชัดเจน"
+            "Persona": "คุณคือแอดมินเพจเกมที่เป็นกะเทย ร่างข้อความมาให้เลือก 10 แบบ ห้ามใส่เลขข้อ ให้ขึ้นบรรทัดใหม่แยกกันชัดเจน"
         },
         "response_mode": "blocking", 
         "user": "kittikoon_user"
@@ -80,15 +78,18 @@ def call_ai_agent(topic, guide):
         response = requests.post(api_url, json=payload, headers=headers, timeout=60)
         res = response.json()
         
+        # แกะ JSON หลายชั้นของ INSEA AI
         raw_text = ""
         if 'data' in res and 'outputs' in res['data']:
             raw_text = res['data']['outputs'].get('text', "")
         elif 'text' in res:
             raw_text = res.get('text', "")
+        elif 'outputs' in res:
+            raw_text = res['outputs'].get('text', "")
             
-        # แยกข้อความเป็นลิสต์ 10 ข้อความ
+        # ใช้ Regex แยกบรรทัดให้เป็น 10 ข้อความ
         options = [l.strip() for l in re.split(r'\n|\d+\.', str(raw_text)) if len(l.strip()) > 5]
-        return options[:10] if options else ["AI ส่งข้อมูลผิดรูปแบบ ลองกดใหม่อีกครั้งนะคะ"]
+        return options[:10] if options else ["AI ส่งข้อมูลมาในรูปแบบที่แยกบรรทัดไม่ได้ ลองกดใหม่อีกครั้งนะคะ"]
     except Exception as e:
         return [f"❌ Error AI: {str(e)}"]
 
@@ -111,18 +112,19 @@ if not st.session_state.logged_in:
         u_email = st.text_input("Email")
         u_pass = st.text_input("Password", type="password")
         if st.button("Sign In", use_container_width=True):
-            user = next((x for x in st.session_state.users_db if str(x['email']) == u_email and str(x['password']) == u_pass), None)
-            if user:
-                st.session_state.logged_in = True
-                st.session_state.user_role = user['role']
-                st.session_state.current_user = user['email']
-                st.rerun()
-            else:
-                st.error("อีเมลหรือรหัสผ่านไม่ถูกต้อง")
+            # ตรวจสอบว่าซิงค์ข้อมูลผู้ใช้มาหรือยัง
+            if 'users_db' in st.session_state:
+                user = next((x for x in st.session_state.users_db if str(x['email']) == u_email and str(x['password']) == u_pass), None)
+                if user:
+                    st.session_state.logged_in = True
+                    st.session_state.user_role = user['role']
+                    st.session_state.current_user = user['email']
+                    st.rerun()
+                else:
+                    st.error("อีเมลหรือรหัสผ่านไม่ถูกต้อง")
 else:
     st.sidebar.title(f"👤 {st.session_state.current_user}")
     
-    # เมนูแอดมิน
     if st.session_state.user_role == "Admin":
         st.title("📥 งานที่ได้รับมอบหมาย")
         my_jobs = [t for t in st.session_state.db if t['PIC'] == st.session_state.current_user]
@@ -130,20 +132,22 @@ else:
         for t in my_jobs:
             with st.expander(f"📌 {t['Topic']} | {t['Status']}", expanded=True):
                 if t['Status'] == "Pending":
+                    # ปุ่ม Draft AI (10 แบบ)
                     if st.button("✨ Draft with AI (10 แบบ)", key=f"ai_{t['id']}"):
-                        with st.spinner("กะเทยกำลังคิดข้อความให้เลือกนะคะ..."):
+                        with st.spinner("กะเทยกำลังคิดข้อความให้เลือก..."):
                             st.session_state[f"ai_options_{t['id']}"] = call_ai_agent(t['Topic'], t['Guide'])
                     
+                    # แสดงผลตัวเลือกปุ่ม 1-10
                     if f"ai_options_{t['id']}" in st.session_state:
-                        st.info("🤖 เลือกข้อความที่โดนใจ (คลิกเพื่อเลือก):")
+                        st.info("🤖 เลือกข้อความที่ต้องการ:")
                         opts = st.session_state[f"ai_options_{t['id']}"]
                         for i, msg in enumerate(opts):
-                            if st.button(f"แบบที่ {i+1}: {msg[:60]}...", key=f"btn_{t['id']}_{i}", use_container_width=True):
+                            if st.button(f"เลือกแบบที่ {i+1}: {msg[:60]}...", key=f"btn_{t['id']}_{i}", use_container_width=True):
                                 t['Draft'] = msg
                                 st.rerun()
                     
                     t['Draft'] = st.text_area("ร่างข้อความสุดท้าย:", value=t['Draft'], key=f"ed_{t['id']}", height=150)
-                    if st.button("ส่งให้หัวหน้าตรวจ", key=f"sub_{t['id']}", use_container_width=True):
+                    if st.button("ส่งงานให้หัวหน้าตรวจ", key=f"sub_{t['id']}", use_container_width=True):
                         t['Status'] = "Reviewing"
                         save_data("tasks", st.session_state.db)
                         st.rerun()
