@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import requests
+import json
 import re
 
 # --- 1. UI Styling: High-End Gemini Dark ---
@@ -38,10 +39,11 @@ if 'users' not in st.session_state:
 if 'db' not in st.session_state: st.session_state.db = []
 if 'logged_in' not in st.session_state: st.session_state.logged_in = False
 
-# --- 3. Deep Extraction API Logic ---
+# --- 3. The Ultimate AI Connector (Deep Extraction) ---
 def call_seeding_agent(topic, guide, persona):
+    # ข้อมูลจากคุณกิตติคุณ
     api_url = "https://ai.insea.io/api/workflows/15905/run"
-    api_key = "cqfxerDagpPV70dwoMQeDSKC9iwCY1EH" # Key ล่าสุด
+    api_key = "cqfxerDagpPV70dwoMQeDSKC9iwCY1EH" 
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     payload = {
         "inputs": {"Topic": topic, "Guide": guide, "Persona": persona},
@@ -52,25 +54,31 @@ def call_seeding_agent(topic, guide, persona):
         response = requests.post(api_url, json=payload, headers=headers, timeout=60)
         res_json = response.json()
         
-        # เจาะลึกถึง 'text' ตามโครงสร้างในรูป image_1aae73.png
-        # ดึง data -> outputs -> text
-        raw_output = res_json.get('data', {}).get('outputs', {}).get('text', "")
+        # 1. เจาะชั้นแรก: data -> outputs
+        outputs = res_json.get('data', {}).get('outputs', {})
         
-        if not raw_output:
+        # 2. เจาะชั้นที่สอง: ดึงค่าจากตัวแปร 'text'
+        raw_text = outputs.get('text', "")
+        
+        if not raw_text:
             return []
-            
-        # ล้างเครื่องหมาย \n และแยกข้อความ
-        # กรองเฉพาะบรรทัดที่ขึ้นต้นด้วยตัวเลข 1-10 หรือบรรทัดที่มีข้อความ
-        raw_output = str(raw_output).replace('\\n', '\n')
-        lines = [line.strip() for line in raw_output.split('\n') if len(line.strip()) > 10]
+
+        # 3. ล้างสัญลักษณ์พิเศษ \n และแยกบรรทัด
+        # รองรับทั้งแบบ String ปกติ และ String ที่ถูก Escape มา
+        formatted_text = str(raw_text).replace('\\n', '\n')
         
-        # ลบเลขลำดับข้างหน้าออก (เช่น "1. ", "2. ") เพื่อให้พร้อมใช้งาน
-        clean_lines = [re.sub(r'^\d+\.\s*', '', line) for line in lines]
-        return clean_lines
-    except:
+        # 4. แยกเป็นข้อๆ 1-10
+        lines = [line.strip() for line in formatted_text.split('\n') if len(line.strip()) > 5]
+        
+        # 5. Clean เลขข้อด้านหน้าออก (เช่น 1. หรือ 1:)
+        clean_messages = [re.sub(r'^\d+[\.\:]\s*', '', m) for m in lines]
+        
+        return clean_messages
+    except Exception as e:
+        st.error(f"Error: {str(e)}")
         return []
 
-# --- 4. Logic Flow ---
+# --- 4. Main App Logic ---
 if not st.session_state.logged_in:
     st.markdown("<br><h1 style='text-align: center;'>✨ Sign in to RoV Seeding</h1>", unsafe_allow_html=True)
     _, col, _ = st.columns([1, 1.4, 1])
@@ -115,24 +123,25 @@ else:
                 st.write(f"**Guide:** {t['Guide']}")
                 
                 if st.button("✨ Draft with AI", key=f"ai_{t['id']}"):
-                    with st.spinner('Gemini กำลังแกะข้อความ Seeding ทั้ง 10 แบบ...'):
+                    with st.spinner('Gemini กำลังเจาะข้อมูล AI Seeding...'):
                         res = call_seeding_agent(t['Topic'], t['Guide'], user['name'])
                         if res:
                             st.session_state[f"res_{t['id']}"] = res
                         else:
-                            st.error("AI ไม่ส่งข้อมูล (ลองกด Publish ใน Agent แล้วรันใหม่)")
+                            st.warning("AI ไม่ตอบกลับ (ลองกด Publish ใน Agent แล้วกดใหม่นะคร้าบ)")
 
+                # แสดงผลแบบแยกกล่อง
                 res_key = f"res_{t['id']}"
                 if res_key in st.session_state:
                     st.markdown("---")
                     for i, msg in enumerate(st.session_state[res_key]):
                         st.info(msg)
-                        if st.button(f"ใช้ข้อความที่ {i+1}", key=f"sel_{t['id']}_{i}"):
+                        if st.button(f"ใช้เวอร์ชัน {i+1}", key=f"sel_{t['id']}_{i}"):
                             t['Draft'] = msg
-                            st.success(f"เลือกแบบที่ {i+1} แล้ว")
+                            st.success(f"เลือกแบบที่ {i+1} แล้ว!")
                 
                 t['Draft'] = st.text_area("Final Draft", value=t['Draft'], key=f"ed_{t['id']}", height=120)
-                if st.button("Submit", key=f"sub_{t['id']}"):
+                if st.button("Submit (ยืนยันส่งงาน)", key=f"sub_{t['id']}"):
                     t['Status'] = "Pending"
                     st.rerun()
 
