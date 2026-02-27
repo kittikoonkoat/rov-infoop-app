@@ -9,18 +9,18 @@ st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
     
-    /* Global Apple White Theme */
+    /* Global Apple Style: White Background & Dark Text */
     .stApp { background-color: #FFFFFF; color: #1d1d1f; }
     html, body, [class*="css"] { font-family: 'Inter', -apple-system, sans-serif; }
 
-    /* Sidebar - Apple Gray Navigation */
+    /* Navigation Sidebar - Light Gray Apple Style */
     [data-testid="stSidebar"] {
         background-color: #f5f5f7 !important;
         border-right: 1px solid #d2d2d7;
     }
 
-    /* Input Fields - Clean & Sharp Borders */
-    .stTextInput input, .stTextArea textarea, .stSelectbox div[data-baseweb="select"] {
+    /* Input Fields & Text Areas */
+    .stTextInput input, .stTextArea textarea, .stSelectbox div[data-basWeb="select"] {
         background-color: #ffffff !important;
         color: #1d1d1f !important;
         border: 1px solid #d2d2d7 !important;
@@ -29,37 +29,38 @@ st.markdown("""
         font-size: 16px !important;
     }
     
-    /* High-end Pill Buttons (Apple Blue) */
+    /* Apple Blue Buttons (Rounded) */
     div.stButton > button {
-        border-radius: 20px;
+        border-radius: 22px;
         background-color: #0071e3;
         color: white;
         font-weight: 500;
         border: none;
-        padding: 0.6rem 2rem;
-        transition: 0.2s;
+        padding: 0.6rem 2.2rem;
+        transition: all 0.2s ease-in-out;
     }
-    div.stButton > button:hover { background-color: #0077ed; transform: scale(1.02); }
+    div.stButton > button:hover {
+        background-color: #0077ed;
+        transform: scale(1.02);
+    }
 
-    /* Luxury Cards (Expander) */
+    /* Luxury Container Cards (Expanders) */
     div[data-testid="stExpander"] {
         border-radius: 18px !important;
-        border: 1px solid #d2d2d7 !important;
+        border: 1px solid #e5e5e7 !important;
         background-color: #ffffff !important;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.06) !important;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.05) !important;
+        margin-bottom: 20px;
     }
 
-    /* Headings & Text */
+    /* Headings & Metrics */
     h1, h2, h3 { color: #1d1d1f !important; font-weight: 600 !important; }
-    .stMarkdown p { color: #1d1d1f; font-weight: 400; }
-    
-    /* Blue Accents for Seeding Content */
-    .stInfo {
-        background-color: #f5f5f7 !important;
-        color: #0071e3 !important;
-        border: 1px solid #0071e3 !important;
-        border-radius: 12px !important;
-    }
+    [data-testid="stMetricValue"] { color: #0071e3 !important; }
+
+    /* Hide Streamlit Header/Footer for Premium Look */
+    header {visibility: hidden;}
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
     </style>
 """, unsafe_allow_html=True)
 
@@ -89,20 +90,19 @@ def call_seeding_agent(topic, guide, persona):
         response = requests.post(api_url, json=payload, headers=headers)
         result = response.json()
         outputs = result.get('data', {}).get('outputs', {})
-        # ดึงจาก key 'text' ตามภาพ image_1b96d8.png
+        # ดึงจาก key 'text' ตามรูปที่ให้มา
         raw_text = outputs.get('text') or next(iter(outputs.values()), "")
-        if not raw_text: return ["⚠️ ไม่มีข้อความส่งกลับมา"]
-        # แยกข้อความ 10 บรรทัด
+        if not raw_text: return ["⚠️ ไม่มีข้อความร่างส่งกลับมา"]
         return [line.strip() for line in raw_text.split('\n') if len(line.strip()) > 5]
     except Exception as e:
         return [f"❌ Error: {str(e)}"]
 
-# --- 4. Sign-in Experience ---
+# --- 4. Login Experience ---
 if not st.session_state.logged_in:
     st.markdown("<br><h1 style='text-align: center;'> Sign in to RoV Seeding</h1>", unsafe_allow_html=True)
     _, col, _ = st.columns([1,2,1])
     with col:
-        with st.form("apple_login"):
+        with st.form("apple_signin"):
             email = st.text_input("Garena Email")
             password = st.text_input("Password", type="password")
             if st.form_submit_button("Sign In"):
@@ -110,35 +110,41 @@ if not st.session_state.logged_in:
                     st.session_state.logged_in = True
                     st.session_state.user_info = st.session_state.users[email]
                     st.rerun()
-                else: st.error("ข้อมูลไม่ถูกต้อง")
+                else: st.error("อีเมลหรือรหัสผ่านไม่ถูกต้อง")
     st.stop()
 
-# --- 5. Navigation ---
+# --- 5. Side Navigation ---
 user = st.session_state.user_info
 st.sidebar.markdown(f"###  สวัสดี, {user['name']}")
 if st.sidebar.button("Sign Out"):
     st.session_state.logged_in = False
     st.rerun()
 
-menu = st.sidebar.selectbox("Go to", ["Admin Control", "PIC Workspace", "Daily Report", " User Management"] if user['role'] == "Admin" else ["PIC Workspace"])
+menu_list = ["PIC Workspace"]
+if user['role'] == "Admin":
+    menu_list = ["Admin Control", "PIC Workspace", "Daily Report", " User Management"]
+choice = st.sidebar.selectbox("Go to", menu_list)
 
 # --- 6. Content Pages ---
 
-if menu == "Admin Control":
+if choice == "Admin Control":
     st.title("👨‍💻 Admin Control Center")
     with st.expander("Assign New Seeding Task"):
         with st.form("task_f"):
             t_topic = st.text_input("Topic")
             t_pic = st.selectbox("Assign to", [v['name'] for v in st.session_state.users.values() if v['role']=="PIC"])
             t_guide = st.text_area("Guideline")
-            if st.form_submit_button("Deploy"):
-                st.session_state.db.append({"id": len(st.session_state.db)+1, "Topic": t_topic, "PIC": t_pic, "Guide": t_guide, "Status": "Waiting", "Draft": ""})
+            if st.form_submit_button("Deploy Task"):
+                st.session_state.db.append({
+                    "id": len(st.session_state.db)+1, "Topic": t_topic, "PIC": t_pic,
+                    "Guide": t_guide, "Status": "Waiting", "Draft": ""
+                })
                 st.success("Task Deployed Successfully")
 
-elif menu == "PIC Workspace":
+elif choice == "PIC Workspace":
     st.title("📱 My Workspace")
     tasks = [t for t in st.session_state.db if t['PIC'] == user['name'] or user['role'] == "Admin"]
-    if not tasks: st.info("No active tasks.")
+    if not tasks: st.info("ไม่มีงานที่ค้างอยู่")
     for t in tasks:
         with st.expander(f"📌 {t['Topic']} — {t['Status']}"):
             st.write(f"**Guide:** {t['Guide']}")
@@ -146,10 +152,11 @@ elif menu == "PIC Workspace":
                 with st.spinner('Apple Intelligence is drafting...'):
                     st.session_state[f"res_{t['id']}"] = call_seeding_agent(t['Topic'], t['Guide'], user['name'])
             
-            # แก้ไข Syntax บรรทัด 180 (Fixed)
-            if f"res_{t['id']}" in st.session_state:
+            # แก้ไข Syntax Error บรรทัด 180 (Fixed)
+            res_key = f"res_{t['id']}"
+            if res_key in st.session_state:
                 st.markdown("---")
-                for i, msg in enumerate(st.session_state[f"res_{t['id']}"]):
+                for i, msg in enumerate(st.session_state[res_key]):
                     st.info(msg)
                     if st.button(f"Choose Version {i+1}", key=f"sel_{t['id']}_{i}"):
                         t['Draft'] = msg
@@ -159,11 +166,11 @@ elif menu == "PIC Workspace":
                 t['Status'] = "Pending Approval"
                 st.rerun()
 
-elif menu == "Daily Report":
+elif choice == "Daily Report":
     st.title("📊 Daily Summary")
     if st.session_state.db: st.dataframe(pd.DataFrame(st.session_state.db), use_container_width=True)
-    else: st.write("System is empty.")
+    else: st.write("ยังไม่มีข้อมูลในระบบ")
 
-elif menu == " User Management":
+elif choice == " User Management":
     st.title("👥 Team Management")
     st.table(pd.DataFrame([{"Name": v['name'], "Email": k, "Role": v['role']} for k, v in st.session_state.users.items()]))
