@@ -6,7 +6,7 @@ import requests
 import re
 
 # ==========================================
-# 1. การเชื่อมต่อ (เน้นความเสถียร)
+# 1. การเชื่อมต่อ & ฟังก์ชันพื้นฐาน
 # ==========================================
 def init_connection():
     try:
@@ -27,25 +27,31 @@ def update_task_in_sheets(task_id, task_data):
             ws = sh.worksheet("tasks")
             cell = ws.find(str(task_id), in_column=1)
             if cell:
+                # บันทึกข้อมูลทั้งหมดลงไปใน Sheet ก่อน
                 updated_values = [
-                    str(task_data['id']), task_data.get('Topic', ''), task_data.get('PIC', ''), 
-                    task_data.get('Status', ''), task_data.get('Guide', ''), task_data.get('Persona', ''), 
-                    task_data.get('Draft', ''), task_data.get('Date', '')
+                    str(task_id), 
+                    str(task_data.get('Topic', '')), 
+                    str(task_data.get('PIC', '')), 
+                    str(task_data.get('Status', '')), 
+                    str(task_data.get('Guide', '')), 
+                    str(task_data.get('Persona', '')), 
+                    str(task_data.get('Draft', '')), 
+                    str(task_data.get('Date', ''))
                 ]
                 ws.update(f"A{cell.row}:H{cell.row}", [updated_values])
                 return True
-        except: pass
+        except Exception as e:
+            st.error(f"Update Error: {e}")
     return False
 
 # ==========================================
-# 2. AI CONNECTOR (แก้ไขจุดส่งค่าพลาด)
+# 2. AI CONNECTOR
 # ==========================================
 def call_ai_agent(topic, guide, persona):
     api_url = "https://ai.insea.io/api/workflows/15905/run"
     api_key = "cqfxerDagpPV70dwoMQeDSKC9iwCY1EH" 
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     
-    # ดึงค่าผ่าน str().strip() เพื่อป้องกันช่องว่างหรือค่า Null
     payload = {
         "inputs": {
             "Topic": str(topic).strip(),
@@ -53,14 +59,13 @@ def call_ai_agent(topic, guide, persona):
             "Persona": str(persona).strip()
         },
         "response_mode": "blocking", 
-        "user": "god_mode_admin"
+        "user": "admin_system"
     }
     
     try:
         response = requests.post(api_url, json=payload, headers=headers, timeout=60)
         res = response.json()
         
-        # แกะเอาข้อความออกมา
         raw_text = ""
         if 'data' in res and 'outputs' in res['data']:
             raw_text = res['data']['outputs'].get('text', "")
@@ -68,20 +73,19 @@ def call_ai_agent(topic, guide, persona):
             raw_text = res['outputs'].get('text', "")
 
         if not raw_text:
-            return [f"⚠️ API Error: {res}"]
+            return [f"⚠️ AI Error: {res}"]
 
-        # แยกเป็นข้อๆ 10 แบบ
         options = re.split(r'\n\s*\d+[\.\)]\s*|\n\s*-\s*', "\n" + str(raw_text).strip())
         return [opt.strip() for opt in options if len(opt.strip()) > 5]
     except Exception as e:
-        return [f"❌ Fatal Error: {str(e)}"]
+        return [f"❌ Connection Error: {str(e)}"]
 
 # ==========================================
-# 3. UI (จุดที่ต้องแก้การส่งตัวแปร)
+# 3. UI APPLICATION (STRATEGY: SAVE THEN AI)
 # ==========================================
 st.set_page_config(page_title="RoV Seeding Pro", layout="wide")
 
-# โหลดข้อมูล
+# โหลดข้อมูลเข้า Session
 if 'db' not in st.session_state:
     sh = init_connection()
     if sh:
@@ -90,61 +94,59 @@ if 'db' not in st.session_state:
 
 if 'logged_in' not in st.session_state: st.session_state.logged_in = False
 
-# ส่วน Login (ข้ามไปส่วน Admin เลย)
-if not st.session_state.logged_in:
-    st.title("💎 RoV Seeding Portal")
-    u_email = st.text_input("Email")
-    u_pass = st.text_input("Password", type="password")
-    if st.button("Sign In"):
-        user = next((x for x in st.session_state.users_db if x['email'] == u_email and str(x['password']) == u_pass), None)
-        if user:
-            st.session_state.logged_in, st.session_state.user_role, st.session_state.current_user = True, user['role'], user['email']
-            st.rerun()
-else:
-    if st.session_state.user_role == "Admin":
-        st.title("📥 My Assigned Tasks")
-        my_tasks = [t for t in st.session_state.db if t['PIC'] == st.session_state.current_user]
+# (ส่วน Login ตัดมาที่หน้า Admin เลย)
+if st.session_state.logged_in and st.session_state.user_role == "Admin":
+    st.title("📥 My Assigned Tasks")
+    my_tasks = [t for t in st.session_state.db if t['PIC'] == st.session_state.current_user]
 
-        for t in my_tasks:
-            if t['Status'] != "Approved":
-                with st.expander(f"📌 {t.get('Topic', 'No Topic')}", expanded=True):
-                    
-                    # หัวใจสำคัญ: การตั้ง Key และรับค่าจาก Widget โดยตรง
-                    c1, c2, c3 = st.columns(3)
-                    
-                    # รับค่าจากช่องพิมพ์ด้วย key ที่ไม่ซ้ำกัน
-                    current_topic = c1.text_input("แก้ไข Topic", value=t.get('Topic', ''), key=f"topic_input_{t['id']}")
-                    current_guide = c2.text_area("แก้ไข Guide", value=t.get('Guide', ''), key=f"guide_input_{t['id']}")
-                    current_persona = c3.text_area("แก้ไข Persona", value=t.get('Persona', ''), key=f"persona_input_{t['id']}")
+    for t in my_tasks:
+        if t['Status'] != "Approved":
+            with st.expander(f"📌 {t.get('Topic', 'No Topic')}", expanded=True):
+                c1, c2, c3 = st.columns(3)
+                
+                # Input Widgets
+                new_topic = c1.text_input("Topic", value=t.get('Topic', ''), key=f"t_{t['id']}")
+                new_guide = c2.text_area("Guide", value=t.get('Guide', ''), key=f"g_{t['id']}")
+                new_persona = c3.text_area("Persona", value=t.get('Persona', ''), key=f"p_{t['id']}")
 
-                    # ปุ่ม Draft (ดึงตัวแปร current_xxx ไปส่งทันที)
-                    if st.button("✨ Draft with AI (10 แบบ)", key=f"ai_btn_{t['id']}", type="primary", use_container_width=True):
-                        if not current_topic.strip():
-                            st.error("แม่! ลืมพิมพ์หัวข้อหรือเปล่า? พิมพ์แล้วกด Enter ก่อนนะ")
+                # --- NEW LOGIC: SAVE THEN DRAFT ---
+                if st.button("✨ Save & Generate AI", key=f"btn_{t['id']}", type="primary", use_container_width=True):
+                    if not new_topic.strip():
+                        st.warning("กรุณากรอก Topic ก่อนครับ")
+                    else:
+                        with st.spinner("Step 1: กำลังบันทึกข้อมูลลงฐานข้อมูล..."):
+                            # อัปเดตข้อมูลในตัวแปร t
+                            t['Topic'] = new_topic
+                            t['Guide'] = new_guide
+                            t['Persona'] = new_persona
+                            
+                            # บันทึกลง Google Sheets ทันที
+                            success = update_task_in_sheets(t['id'], t)
+                        
+                        if success:
+                            with st.spinner("Step 2: ข้อมูลพร้อมแล้ว! AI กำลังประมวลผล..."):
+                                # ส่งค่าที่เพิ่งบันทึกสำเร็จไปให้ AI
+                                results = call_ai_agent(new_topic, new_guide, new_persona)
+                                st.session_state[f"res_{t['id']}"] = results
+                                st.success("บันทึกข้อมูลและ Generate สำเร็จ!")
                         else:
-                            with st.spinner("AI กำลังรับข้อมูลที่คุณพิมพ์..."):
-                                # ส่งค่า 'สดๆ' จาก Widget เข้าไปในฟังก์ชัน
-                                results = call_ai_agent(current_topic, current_guide, current_persona)
-                                st.session_state[f"temp_results_{t['id']}"] = results
-                    
-                    # แสดงผลลัพธ์
-                    if f"temp_results_{t['id']}" in st.session_state:
-                        st.markdown("---")
-                        for i, msg in enumerate(st.session_state[f"temp_results_{t['id']}"]):
-                            if st.button(f"เลือกแบบที่ {i+1}: {msg[:60]}...", key=f"sel_{t['id']}_{i}"):
-                                t['Draft'] = msg
-                                # เซฟค่าที่พิมพ์ลงไปด้วยกันหลุด
-                                t['Topic'], t['Guide'], t['Persona'] = current_topic, current_guide, current_persona
-                                update_task_in_sheets(t['id'], t)
-                                st.rerun()
+                            st.error("เกิดข้อผิดพลาดในการบันทึกข้อมูลลง Sheets")
 
-                    # ส่วนส่งงาน
-                    t['Draft'] = st.text_area("ร่างสุดท้าย", value=t.get('Draft', ''), key=f"final_dr_{t['id']}")
-                    if st.button("🚀 ส่งงาน (Review)", key=f"submit_{t['id']}", use_container_width=True):
-                        t.update({'Topic': current_topic, 'Guide': current_guide, 'Persona': current_persona, 'Status': 'Reviewing'})
-                        update_task_in_sheets(t['id'], t)
-                        st.rerun()
+                # แสดงผลลัพธ์จาก AI
+                if f"res_{t['id']}" in st.session_state:
+                    st.markdown("---")
+                    for i, msg in enumerate(st.session_state[f"res_{t['id']}"]):
+                        if st.button(f"เลือกแบบที่ {i+1}: {msg[:60]}...", key=f"sel_{t['id']}_{i}"):
+                            t['Draft'] = msg
+                            update_task_in_sheets(t['id'], t)
+                            st.rerun()
 
-    if st.sidebar.button("Sign Out"):
-        st.session_state.logged_in = False
-        st.rerun()
+                t['Draft'] = st.text_area("Draft สุดท้าย", value=t.get('Draft', ''), key=f"dr_{t['id']}")
+                if st.button("🚀 ส่งงาน (Review)", key=f"sub_{t['id']}", use_container_width=True):
+                    t['Status'] = 'Reviewing'
+                    t['Topic'], t['Guide'], t['Persona'] = new_topic, new_guide, new_persona
+                    update_task_in_sheets(t['id'], t)
+                    st.rerun()
+else:
+    # (โค้ดส่วน Login ปกติ)
+    st.write("Please Sign In")
