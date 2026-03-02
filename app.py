@@ -1,5 +1,5 @@
 import streamlit as st
-import pd
+import pandas as pd  # แก้ไขจาก pd เป็น pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 import requests
@@ -55,7 +55,7 @@ def update_task_in_sheets(task_id, task_data):
     return False
 
 # ==========================================
-# 2. AI WORKFLOW CONNECTOR (Clean & Robust Version)
+# 2. AI WORKFLOW CONNECTOR
 # ==========================================
 
 def call_ai_agent(topic, guide, persona):
@@ -63,13 +63,10 @@ def call_ai_agent(topic, guide, persona):
     api_key = "cqfxerDagpPV70dwoMQeDSKC9iwCY1EH" 
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     
-    # ส่งคำสั่งแบบรวมเพื่อความชัวร์ว่า AI จะไม่หลุดบทบาท
-    combined_instruction = f"เขียนในฐานะ: {persona}. เนื้อหา: {guide}. (ขอ 10 แบบสั้นๆ สไตล์คอมเมนต์โซเชียล)"
-    
     payload = {
         "inputs": {
             "Topic": str(topic), 
-            "Guide": combined_instruction,
+            "Guide": str(guide),
             "Persona": str(persona)
         },
         "response_mode": "blocking", 
@@ -81,19 +78,14 @@ def call_ai_agent(topic, guide, persona):
         res = response.json()
         
         raw_text = ""
-        # ตรวจสอบโครงสร้าง JSON จาก API
         if 'data' in res and 'outputs' in res['data']:
             raw_text = res['data']['outputs'].get('text', "")
         elif 'outputs' in res:
             raw_text = res['outputs'].get('text', "")
-        elif 'text' in res:
-            raw_text = res.get('text', "")
 
         if not raw_text or str(raw_text).strip() == "":
-            err_msg = res.get('message', 'AI ไม่ส่งข้อความกลับมา (ลองเช็ค Workflow)')
-            return [f"❌ Error: {err_msg}"]
+            return [f"❌ AI ไม่ตอบกลับ: {res.get('message', 'ลองเช็ค Workflow อีกครั้ง')}"]
 
-        # แยกข้อความ 10 แบบ
         options = re.split(r'\n\s*\d+[\.\)]\s*|\n\s*-\s*', "\n" + str(raw_text).strip())
         clean_options = [opt.strip() for opt in options if len(opt.strip()) > 5]
         
@@ -129,29 +121,26 @@ if not st.session_state.logged_in:
                 st.rerun()
             else:
                 st.error("อีเมลหรือรหัสผ่านไม่ถูกต้อง")
-
 else:
     st.sidebar.title(f"👤 {st.session_state.user_role}")
     st.sidebar.write(st.session_state.current_user)
 
-    # 📥 ADMIN INTERFACE
     if st.session_state.user_role == "Admin":
         st.title("📥 My Assigned Tasks")
         my_tasks = [t for t in st.session_state.db if t['PIC'] == st.session_state.current_user]
 
         for t in my_tasks:
             if t['Status'] != "Approved":
-                # แสดง Topic ในแถบหัวข้อ
-                with st.expander(f"📌 {t['Topic']} | สถานะ: {t['Status']}", expanded=True):
+                with st.expander(f"📌 {t.get('Topic', 'No Topic')} | สถานะ: {t.get('Status', 'N/A')}", expanded=True):
                     col1, col2 = st.columns(2)
-                    t['Guide'] = col1.text_area("แนวทาง (Guide):", value=t['Guide'], key=f"g_{t['id']}")
-                    t['Persona'] = col2.text_area("บุคลิก AI (Persona):", value=t['Persona'], key=f"p_{t['id']}")
+                    t['Guide'] = col1.text_area("แนวทาง (Guide):", value=t.get('Guide', ''), key=f"g_{t['id']}")
+                    t['Persona'] = col2.text_area("บุคลิก AI (Persona):", value=t.get('Persona', ''), key=f"p_{t['id']}")
 
                     if st.button("✨ Draft with AI (10 แบบ)", key=f"ai_{t['id']}"):
                         with st.spinner("กำลังปั่นเนื้อหา..."):
-                            # --- แก้ไขจุดดึง Topic ตรงนี้ ---
-                            target_topic = t.get('Topic', 'คอนเทนต์ RoV')
-                            st.session_state[f"opts_{t['id']}"] = call_ai_agent(target_topic, t['Guide'], t['Persona'])
+                            # ดึง Topic มาจาก Dictionary มั่นใจว่ามีค่าส่งไปแน่นอน
+                            current_topic = t.get('Topic', 'Dyadia Buff')
+                            st.session_state[f"opts_{t['id']}"] = call_ai_agent(current_topic, t['Guide'], t['Persona'])
                     
                     if f"opts_{t['id']}" in st.session_state:
                         st.markdown("---")
@@ -161,20 +150,16 @@ else:
                                 update_task_in_sheets(t['id'], t)
                                 st.rerun()
 
-                    t['Draft'] = st.text_area("ร่างข้อความสุดท้าย:", value=t['Draft'], key=f"dr_{t['id']}", height=150)
+                    t['Draft'] = st.text_area("ร่างข้อความสุดท้าย:", value=t.get('Draft', ''), key=f"dr_{t['id']}", height=150)
                     
                     if st.button("🚀 ส่งให้ Boss ตรวจ", key=f"sub_{t['id']}", type="primary", use_container_width=True):
                         t['Status'] = "Reviewing"
                         update_task_in_sheets(t['id'], t)
                         st.success("ส่งงานสำเร็จ!")
                         st.rerun()
-            else:
-                st.success(f"✅ งาน '{t['Topic']}' อนุมัติแล้ว")
-
-    # 👨‍💼 BOSS INTERFACE
+    
     elif st.session_state.user_role == "Boss":
         st.title("👨‍💼 Boss Assignment & Review")
-        
         with st.expander("➕ สั่งงาน Seeding ใหม่"):
             with st.form("add_task"):
                 topic = st.text_input("หัวข้อคอนเทนต์ (Topic):")
