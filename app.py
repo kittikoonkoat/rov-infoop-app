@@ -50,7 +50,7 @@ def update_task_in_sheets(task_id, task_data):
     return False
 
 # ==========================================
-# 2. AI CONNECTOR
+# 2. AI CONNECTOR (FIXED)
 # ==========================================
 
 def call_ai_agent(topic, guide, persona):
@@ -58,12 +58,11 @@ def call_ai_agent(topic, guide, persona):
     api_key = "cqfxerDagpPV70dwoMQeDSKC9iwCY1EH" 
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     
-    # Payload ต้องใช้ Key ให้ตรงกับ Start Node (Topic, Guide, Persona)
     payload = {
         "inputs": {
-            "Topic": str(topic),
-            "Guide": str(guide),
-            "Persona": str(persona)
+            "Topic": str(topic).strip(),
+            "Guide": str(guide).strip(),
+            "Persona": str(persona).strip()
         },
         "response_mode": "blocking", 
         "user": "admin_portal"
@@ -79,12 +78,13 @@ def call_ai_agent(topic, guide, persona):
         elif 'outputs' in res:
             raw_text = res['outputs'].get('text', "")
 
-        if not raw_text:
-            return [f"❌ Error: {res.get('message', 'AI ไม่ส่งข้อความกลับมา')}"]
+        if not raw_text or len(str(raw_text)) < 5:
+            return [f"⚠️ AI ตอบกลับมาสั้นเกินไป: {res.get('message', 'ตรวจสอบ Prompt ใน Insea')}"]
 
         # แยกข้อความ 10 แบบ
         options = re.split(r'\n\s*\d+[\.\)]\s*|\n\s*-\s*', "\n" + str(raw_text).strip())
-        return [opt.strip() for opt in options if len(opt.strip()) > 5]
+        clean_options = [opt.strip() for opt in options if len(opt.strip()) > 5]
+        return clean_options if clean_options else [str(raw_text)]
     except Exception as e:
         return [f"❌ Error Connect: {str(e)}"]
 
@@ -123,17 +123,18 @@ else:
                     st.markdown("### 📝 รายละเอียดงาน")
                     
                     c1, c2, c3 = st.columns([1, 1, 1])
-                    # รับค่าจาก Widget โดยตรง
+                    
+                    # บังคับการดึงค่าผ่าน Session State เพื่อป้องกันค่าว่าง
                     input_topic = c1.text_input("หัวข้อ (Topic):", value=t.get('Topic', ''), key=f"t_{t['id']}")
-                    input_guide = c2.text_area("แนวทาง (Guide):", value=t.get('Guide', ''), key=f"g_{t['id']}")
-                    input_persona = c3.text_area("บุคลิก AI (Persona):", value=t.get('Persona', ''), key=f"p_{t['id']}")
+                    input_guide = c2.text_area("แนวทาง (Guide):", value=t.get('Guide', ''), key=f"g_{t['id']}", height=100)
+                    input_persona = c3.text_area("บุคลิก AI (Persona):", value=t.get('Persona', ''), key=f"p_{t['id']}", height=100)
 
                     if st.button("✨ Draft with AI (10 แบบ)", key=f"ai_{t['id']}", type="primary", use_container_width=True):
-                        if not input_topic:
-                            st.error("ใส่หัวข้อก่อนแม่!")
+                        if not input_topic.strip():
+                            st.warning("แม่! พิมพ์หัวข้อคอนเทนต์แล้วกด Enter ก่อนกดปุ่มนี้!")
                         else:
-                            with st.spinner("AI กำลังปั่น..."):
-                                # ส่งค่า 'input_xxx' จากหน้าจอไปให้ฟังก์ชัน AI
+                            with st.spinner("AI กำลังปั่นเนื้อหา..."):
+                                # ส่งค่าตรงจากตัวแปรหน้าจอ (input_topic) เพื่อความสดใหม่
                                 results = call_ai_agent(input_topic, input_guide, input_persona)
                                 st.session_state[f"opts_{t['id']}"] = results
                     
@@ -141,24 +142,27 @@ else:
                         st.markdown("---")
                         st.subheader("เลือกร่างที่ชอบ:")
                         for i, msg in enumerate(st.session_state[f"opts_{t['id']}"]):
-                            if st.button(f"เลือกแบบที่ {i+1}: {msg[:80]}...", key=f"sel_{t['id']}_{i}", use_container_width=True):
-                                t['Draft'] = msg
-                                t['Topic'] = input_topic
-                                t['Guide'] = input_guide
-                                t['Persona'] = input_persona
-                                update_task_in_sheets(t['id'], t)
-                                st.success("บันทึกร่างลงแผ่นงานแล้ว!")
-                                st.rerun()
+                            # ตรวจสอบว่าผลลัพธ์จาก AI ไม่ใช่ข้อความแจ้ง Error
+                            if "❌" not in msg and "⚠️" not in msg:
+                                if st.button(f"เลือกแบบที่ {i+1}: {msg[:80]}...", key=f"sel_{t['id']}_{i}", use_container_width=True):
+                                    t['Draft'] = msg
+                                    t['Topic'] = input_topic
+                                    t['Guide'] = input_guide
+                                    t['Persona'] = input_persona
+                                    if update_task_in_sheets(t['id'], t):
+                                        st.success("บันทึกร่างเรียบร้อย!")
+                                        st.rerun()
+                            else:
+                                st.error(msg)
 
                     t['Draft'] = st.text_area("ร่างสุดท้าย:", value=t.get('Draft', ''), key=f"dr_{t['id']}", height=100)
                     if st.button("🚀 ส่งงาน", key=f"sub_{t['id']}", use_container_width=True):
-                        # อัปเดตค่าปัจจุบันก่อนส่ง
                         t['Topic'] = input_topic
                         t['Guide'] = input_guide
                         t['Persona'] = input_persona
                         t['Status'] = "Reviewing"
-                        update_task_in_sheets(t['id'], t)
-                        st.rerun()
+                        if update_task_in_sheets(t['id'], t):
+                            st.rerun()
 
     # --- BOSS VIEW ---
     elif st.session_state.user_role == "Boss":
