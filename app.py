@@ -39,7 +39,7 @@ def add_new_task(new_task):
     if sh:
         try:
             ws = sh.worksheet("tasks")
-            ws.append_row(list(new_task.values())) # เพิ่มแถวใหม่ต่อท้าย
+            ws.append_row(list(new_task.values()))
             return True
         except Exception as e:
             st.error(f"เพิ่มงานไม่สำเร็จ: {e}")
@@ -50,24 +50,23 @@ def update_task_in_sheets(task_id, task_data):
     if sh:
         try:
             ws = sh.worksheet("tasks")
-            # หาแถวที่มี ID ตรงกันในคอลัมน์ A
             cell = ws.find(str(task_id), in_column=1)
             if cell:
                 row_idx = cell.row
-                # ลำดับต้องตรงกับหัวตาราง: id, Topic, PIC, Status, Guide, Persona, Draft, Date
+                # ลำดับคอลัมน์: id, Topic, PIC, Status, Guide, Persona, Draft, Date
                 updated_values = [
                     str(task_data['id']), task_data['Topic'], task_data['PIC'], 
                     task_data['Status'], task_data['Guide'], task_data['Persona'], 
                     task_data['Draft'], task_data['Date']
                 ]
-                ws.update(f"A{row_idx}:H{row_idx}", [updated_values]) # อัปเดตเฉพาะแถว
+                ws.update(f"A{row_idx}:H{row_idx}", [updated_values])
                 return True
         except Exception as e:
             st.error(f"อัปเดตงานล้มเหลว: {e}")
     return False
 
 # ==========================================
-# 2. AI WORKFLOW CONNECTOR (Robust Version)
+# 2. AI WORKFLOW CONNECTOR (Enhanced Debugging)
 # ==========================================
 
 def call_ai_agent(topic, guide, persona):
@@ -76,7 +75,11 @@ def call_ai_agent(topic, guide, persona):
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     
     payload = {
-        "inputs": {"Topic": str(topic), "Guide": str(guide), "Persona": str(persona)},
+        "inputs": {
+            "Topic": str(topic) if topic else "ทั่วไป", 
+            "Guide": str(guide) if guide else "เขียนให้ดูน่าสนใจ", 
+            "Persona": str(persona) if persona else "แอดมินเพจเกม"
+        },
         "response_mode": "blocking", 
         "user": "kittikoon_user"
     }
@@ -85,23 +88,32 @@ def call_ai_agent(topic, guide, persona):
         response = requests.post(api_url, json=payload, headers=headers, timeout=60)
         res = response.json()
         
-        # ดึงข้อความดิบออกมา
-        raw_text = res.get('data', {}).get('outputs', {}).get('text', "").strip()
-        
-        if not raw_text:
-            return ["❌ AI ไม่ตอบกลับมา ลองตรวจสอบ Prompt อีกครั้ง"]
+        # ค้นหาข้อความจากโครงสร้าง JSON ทุกรูปแบบ
+        raw_text = ""
+        if isinstance(res, dict):
+            # ตรวจสอบโครงสร้างหลัก
+            raw_text = res.get('data', {}).get('outputs', {}).get('text', "")
+            # ถ้าไม่เจอ ลองหาในจุดอื่นๆ
+            if not raw_text:
+                raw_text = res.get('outputs', {}).get('text', "")
+            if not raw_text:
+                raw_text = res.get('text', "")
 
-        # แยกข้อความ 1. หรือ - หรือตัวเลขอื่นๆ
+        raw_text = str(raw_text).strip()
+        
+        if not raw_text or raw_text == "None":
+            # ดึงข้อความแจ้งเตือนจากระบบ (ถ้ามี)
+            err_msg = res.get('message', 'AI ไม่ส่งข้อความกลับมา (ตรวจสอบ Workflow หรือ Prompt)')
+            return [f"❌ Error: {err_msg}"]
+
+        # แยกข้อความ (1. หรือ - หรือบรรทัดใหม่)
         options = re.split(r'\n\d+[\.\)]\s*|\n-\s*', "\n" + raw_text)
         clean_options = [opt.strip() for opt in options if len(opt.strip()) > 5]
         
-        # Fallback: ถ้าแยกไม่ได้เลย ให้เอาข้อความทั้งหมดมาเป็นตัวเลือกเดียว
-        if not clean_options and len(raw_text) > 0:
-            clean_options = [raw_text]
-            
-        return clean_options[:10]
+        return clean_options[:10] if clean_options else [raw_text]
+        
     except Exception as e:
-        return [f"❌ AI Error: {str(e)}"]
+        return [f"❌ การเชื่อมต่อล้มเหลว: {str(e)}"]
 
 # ==========================================
 # 3. UI APPLICATION
@@ -115,11 +127,10 @@ if 'db' not in st.session_state:
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 
-# --- LOGIN PAGE ---
 if not st.session_state.logged_in:
     st.title("💎 RoV Seeding Portal")
-    col_login, _ = st.columns([1, 2])
-    with col_login:
+    col_l, _ = st.columns([1, 2])
+    with col_l:
         u_email = st.text_input("Email")
         u_pass = st.text_input("Password", type="password")
         if st.button("Sign In", use_container_width=True):
@@ -132,21 +143,19 @@ if not st.session_state.logged_in:
             else:
                 st.error("อีเมลหรือรหัสผ่านไม่ถูกต้อง")
 
-# --- MAIN APP ---
 else:
     st.sidebar.title(f"👤 {st.session_state.user_role}")
     st.sidebar.write(st.session_state.current_user)
 
-    # 👨‍💼 BOSS ROLE
+    # 👨‍💼 BOSS INTERFACE
     if st.session_state.user_role == "Boss":
         st.title("👨‍💼 Boss Assignment & Review")
         
-        with st.expander("➕ สั่งงาน Seeding ใหม่", expanded=False):
+        with st.expander("➕ สั่งงาน Seeding ใหม่"):
             with st.form("add_task"):
                 topic = st.text_input("หัวข้อคอนเทนต์ (Topic):")
                 pic = st.selectbox("เลือก Admin:", [u['email'] for u in st.session_state.users_db if u['role'] == 'Admin'])
                 if st.form_submit_button("ส่งงาน"):
-                    # ใช้ Unique ID อิงจากเวลา
                     task_id = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
                     new_task = {
                         "id": task_id, "Topic": topic, "PIC": pic, "Status": "Pending",
@@ -161,7 +170,7 @@ else:
         review_tasks = [t for t in st.session_state.db if t['Status'] == "Reviewing"]
         
         if not review_tasks:
-            st.info("ยังไม่มีงานรอตรวจ")
+            st.info("ไม่มีงานรอตรวจ")
 
         for t in review_tasks:
             with st.expander(f"📋 ตรวจงาน: {t['Topic']} (โดย {t['PIC']})", expanded=True):
@@ -178,7 +187,7 @@ else:
                     update_task_in_sheets(t['id'], t)
                     st.rerun()
 
-    # 📥 ADMIN ROLE
+    # 📥 ADMIN INTERFACE
     elif st.session_state.user_role == "Admin":
         st.title("📥 My Assigned Tasks")
         my_tasks = [t for t in st.session_state.db if t['PIC'] == st.session_state.current_user]
@@ -187,9 +196,8 @@ else:
             if t['Status'] != "Approved":
                 with st.expander(f"📌 {t['Topic']} | สถานะ: {t['Status']}", expanded=True):
                     col1, col2 = st.columns(2)
-                    # ดึงค่าจากตัวแปร t มาใส่ใน text_area
                     t['Guide'] = col1.text_area("แนวทาง (Guide):", value=t['Guide'], key=f"g_{t['id']}")
-                    t['Persona'] = col2.text_area("บุคลิก AI (Persona):", value=t['Persona'], key=f"p_{t['id']}")
+                    t['Persona'] = col2.text_area("บุคลิก AI (Persona):", value=t['Persona'] if t['Persona'] else "แอดมินกะเทย RoV", key=f"p_{t['id']}")
 
                     if st.button("✨ Draft with AI (10 แบบ)", key=f"ai_{t['id']}"):
                         with st.spinner("กำลังปั่นเนื้อหา..."):
@@ -200,18 +208,18 @@ else:
                         for i, msg in enumerate(st.session_state[f"opts_{t['id']}"]):
                             if st.button(f"เลือกแบบที่ {i+1}: {msg[:70]}...", key=f"sel_{t['id']}_{i}", use_container_width=True):
                                 t['Draft'] = msg
-                                update_task_in_sheets(t['id'], t) # บันทึกร่างทันทีกันหาย
+                                update_task_in_sheets(t['id'], t)
                                 st.rerun()
 
-                    t['Draft'] = st.text_area("ร่างข้อความสุดท้าย (แก้ไขเพิ่มได้):", value=t['Draft'], key=f"dr_{t['id']}", height=150)
+                    t['Draft'] = st.text_area("ร่างข้อความสุดท้าย:", value=t['Draft'], key=f"dr_{t['id']}", height=150)
                     
                     if st.button("🚀 ส่งให้ Boss ตรวจ", key=f"sub_{t['id']}", type="primary", use_container_width=True):
                         t['Status'] = "Reviewing"
                         update_task_in_sheets(t['id'], t)
-                        st.success("ส่งงานเรียบร้อย!")
+                        st.success("ส่งงานสำเร็จ!")
                         st.rerun()
             else:
-                st.success(f"✅ งาน '{t['Topic']}' ได้รับการอนุมัติแล้ว")
+                st.success(f"✅ งาน '{t['Topic']}' อนุมัติแล้ว")
 
     if st.sidebar.button("Sign Out"):
         st.session_state.logged_in = False
