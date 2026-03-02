@@ -64,11 +64,14 @@ def call_ai_agent(topic, guide, persona):
     api_key = "cqfxerDagpPV70dwoMQeDSKC9iwCY1EH" 
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     
+    # แก้จุดนี้: ผสม Persona เข้าไปใน Guide เพื่อให้ AI หลุดจากบุคลิกเดิม
+    combined_instruction = f"เขียนในฐานะ: {persona}. เนื้อหา: {guide}. (ขอ 10 แบบสั้นๆ สไตล์คอมเมนต์โซเชียลจิกกัด)"
+    
     payload = {
         "inputs": {
-            "Topic": str(topic) if topic else "RoV New Skin", 
-            "Guide": str(guide) if guide else "เขียนแคปชั่นโปรโมท", 
-            "Persona": str(persona) if persona else "แอดมินเพจเกม"
+            "Topic": str(topic), 
+            "Guide": combined_instruction, # ส่ง Persona เข้าไปในช่อง Guide ด้วย
+            "Persona": str(persona)
         },
         "response_mode": "blocking", 
         "user": "kittikoon_user"
@@ -78,8 +81,21 @@ def call_ai_agent(topic, guide, persona):
         response = requests.post(api_url, json=payload, headers=headers, timeout=60)
         res = response.json()
         
-        # ค้นหาข้อความดิบ (Raw Text) จากโครงสร้าง JSON ทุกรูปแบบ
-        raw_text = ""
+        # ค้นหาข้อความดิบ (Raw Text)
+        raw_text = res.get('data', {}).get('outputs', {}).get('text', "")
+        if not raw_text: raw_text = res.get('outputs', {}).get('text', "")
+        
+        # กรณีไม่มีเนื้อหา ให้ดึง Error จาก API มาแสดง
+        if not raw_text:
+            return [f"⚠️ API Error: {res.get('message', 'No text found')}"]
+
+        # แยกข้อความ 10 แบบ
+        options = re.split(r'\n\s*\d+[\.\)]\s*|\n\s*-\s*', "\n" + str(raw_text))
+        clean_options = [opt.strip() for opt in options if len(opt.strip()) > 5]
+        
+        return clean_options[:10] if clean_options else [str(raw_text)]
+    except Exception as e:
+        return [f"❌ Error: {str(e)}"]
         
         # 1. เช็คโครงสร้างแบบมาตรฐาน (data -> outputs -> text)
         if 'data' in res and 'outputs' in res['data']:
