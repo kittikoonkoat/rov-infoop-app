@@ -1,5 +1,5 @@
 import streamlit as st
-import pandas as pd  # แก้ไขจาก pd เป็น pandas as pd
+import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 import requests
@@ -44,9 +44,9 @@ def update_task_in_sheets(task_id, task_data):
             if cell:
                 row_idx = cell.row
                 updated_values = [
-                    str(task_data['id']), task_data['Topic'], task_data['PIC'], 
-                    task_data['Status'], task_data['Guide'], task_data['Persona'], 
-                    task_data['Draft'], task_data['Date']
+                    str(task_data['id']), task_data.get('Topic', ''), task_data.get('PIC', ''), 
+                    task_data.get('Status', ''), task_data.get('Guide', ''), task_data.get('Persona', ''), 
+                    task_data.get('Draft', ''), task_data.get('Date', '')
                 ]
                 ws.update(f"A{row_idx}:H{row_idx}", [updated_values])
                 return True
@@ -55,7 +55,7 @@ def update_task_in_sheets(task_id, task_data):
     return False
 
 # ==========================================
-# 2. AI WORKFLOW CONNECTOR
+# 2. AI WORKFLOW CONNECTOR (Enhanced)
 # ==========================================
 
 def call_ai_agent(topic, guide, persona):
@@ -63,14 +63,23 @@ def call_ai_agent(topic, guide, persona):
     api_key = "cqfxerDagpPV70dwoMQeDSKC9iwCY1EH" 
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     
+    # ดักกรณีตัวแปรว่างก่อนส่ง
+    safe_topic = str(topic) if topic else "ทั่วไป"
+    safe_guide = str(guide) if guide else "เขียนคอมเมนต์ให้น่าสนใจ"
+    safe_persona = str(persona) if persona else "กะเทยเล่น RoV"
+
     payload = {
         "inputs": {
-            "Topic": str(topic), 
-            "Guide": str(guide),
-            "Persona": str(persona)
+            # ส่งดักทั้งตัวเล็กตัวใหญ่เพื่อให้ Workflow ใน Insea รับค่าได้แน่นอน
+            "Topic": safe_topic, 
+            "topic": safe_topic,
+            "Guide": safe_guide,
+            "guide": safe_guide,
+            "Persona": safe_persona,
+            "persona": safe_persona
         },
         "response_mode": "blocking", 
-        "user": "kittikoon_user"
+        "user": "admin_portal"
     }
     
     try:
@@ -78,14 +87,17 @@ def call_ai_agent(topic, guide, persona):
         res = response.json()
         
         raw_text = ""
+        # ตรวจสอบโครงสร้างข้อมูลที่ส่งกลับมาจาก Insea API
         if 'data' in res and 'outputs' in res['data']:
             raw_text = res['data']['outputs'].get('text', "")
         elif 'outputs' in res:
             raw_text = res['outputs'].get('text', "")
 
         if not raw_text or str(raw_text).strip() == "":
-            return [f"❌ AI ไม่ตอบกลับ: {res.get('message', 'ลองเช็ค Workflow อีกครั้ง')}"]
+            error_detail = res.get('message', 'AI ไม่ส่งข้อความกลับมา (ตรวจสอบการลากเส้นใน Workflow)')
+            return [f"❌ Error: {error_detail}"]
 
+        # แยกข้อความ 10 แบบด้วย Regex
         options = re.split(r'\n\s*\d+[\.\)]\s*|\n\s*-\s*', "\n" + str(raw_text).strip())
         clean_options = [opt.strip() for opt in options if len(opt.strip()) > 5]
         
@@ -106,6 +118,7 @@ if 'db' not in st.session_state:
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 
+# --- LOGIN PAGE ---
 if not st.session_state.logged_in:
     st.title("💎 RoV Seeding Portal")
     col_l, _ = st.columns([1, 2])
@@ -121,26 +134,31 @@ if not st.session_state.logged_in:
                 st.rerun()
             else:
                 st.error("อีเมลหรือรหัสผ่านไม่ถูกต้อง")
+
+# --- MAIN APP ---
 else:
     st.sidebar.title(f"👤 {st.session_state.user_role}")
     st.sidebar.write(st.session_state.current_user)
 
+    # ADMIN VIEW
     if st.session_state.user_role == "Admin":
         st.title("📥 My Assigned Tasks")
         my_tasks = [t for t in st.session_state.db if t['PIC'] == st.session_state.current_user]
 
         for t in my_tasks:
             if t['Status'] != "Approved":
-                with st.expander(f"📌 {t.get('Topic', 'No Topic')} | สถานะ: {t.get('Status', 'N/A')}", expanded=True):
+                task_title = t.get('Topic', 'No Topic Specified')
+                with st.expander(f"📌 {task_title} | สถานะ: {t.get('Status', 'Pending')}", expanded=True):
                     col1, col2 = st.columns(2)
                     t['Guide'] = col1.text_area("แนวทาง (Guide):", value=t.get('Guide', ''), key=f"g_{t['id']}")
                     t['Persona'] = col2.text_area("บุคลิก AI (Persona):", value=t.get('Persona', ''), key=f"p_{t['id']}")
 
                     if st.button("✨ Draft with AI (10 แบบ)", key=f"ai_{t['id']}"):
-                        with st.spinner("กำลังปั่นเนื้อหา..."):
-                            # ดึง Topic มาจาก Dictionary มั่นใจว่ามีค่าส่งไปแน่นอน
-                            current_topic = t.get('Topic', 'Dyadia Buff')
-                            st.session_state[f"opts_{t['id']}"] = call_ai_agent(current_topic, t['Guide'], t['Persona'])
+                        with st.spinner("กำลังติดต่อ AI..."):
+                            # มั่นใจว่ามี Topic ส่งไปแน่นอน
+                            current_topic = t.get('Topic') if t.get('Topic') else "หัวข้อทั่วไป"
+                            results = call_ai_agent(current_topic, t['Guide'], t['Persona'])
+                            st.session_state[f"opts_{t['id']}"] = results
                     
                     if f"opts_{t['id']}" in st.session_state:
                         st.markdown("---")
@@ -157,7 +175,10 @@ else:
                         update_task_in_sheets(t['id'], t)
                         st.success("ส่งงานสำเร็จ!")
                         st.rerun()
-    
+            else:
+                st.success(f"✅ งาน '{t.get('Topic')}' อนุมัติแล้ว")
+
+    # BOSS VIEW
     elif st.session_state.user_role == "Boss":
         st.title("👨‍💼 Boss Assignment & Review")
         with st.expander("➕ สั่งงาน Seeding ใหม่"):
