@@ -25,26 +25,32 @@ def init_connection():
 def sync_data():
     sh = init_connection()
     if sh:
-        st.session_state.db = sh.worksheet("tasks").get_all_records()
-        st.session_state.users_db = sh.worksheet("users").get_all_records()
+        try:
+            st.session_state.db = sh.worksheet("tasks").get_all_records()
+            st.session_state.users_db = sh.worksheet("users").get_all_records()
+        except Exception as e:
+            st.error(f"Sync Error: {e}")
 
 def update_task_in_sheets(task_id, task_data):
     sh = init_connection()
     if sh:
-        ws = sh.worksheet("tasks")
-        cell = ws.find(str(task_id), in_column=1)
-        if cell:
-            updated_values = [
-                str(task_data['id']), task_data.get('Topic', ''), task_data.get('PIC', ''), 
-                task_data.get('Status', ''), task_data.get('Guide', ''), task_data.get('Persona', ''), 
-                task_data.get('Draft', ''), task_data.get('Date', '')
-            ]
-            ws.update(f"A{cell.row}:H{cell.row}", [updated_values])
-            return True
+        try:
+            ws = sh.worksheet("tasks")
+            cell = ws.find(str(task_id), in_column=1)
+            if cell:
+                updated_values = [
+                    str(task_data['id']), task_data.get('Topic', ''), task_data.get('PIC', ''), 
+                    task_data.get('Status', ''), task_data.get('Guide', ''), task_data.get('Persona', ''), 
+                    task_data.get('Draft', ''), task_data.get('Date', '')
+                ]
+                ws.update(f"A{cell.row}:H{cell.row}", [updated_values])
+                return True
+        except Exception as e:
+            st.error(f"Update Error: {e}")
     return False
 
 # ==========================================
-# 2. AI CONNECTOR (FIXED MAPPING)
+# 2. AI CONNECTOR (ROBUST MAPPING)
 # ==========================================
 
 def call_ai_agent(topic, guide, persona):
@@ -52,34 +58,49 @@ def call_ai_agent(topic, guide, persona):
     api_key = "cqfxerDagpPV70dwoMQeDSKC9iwCY1EH" 
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     
-    # Debug: แสดงค่าที่กำลังจะส่ง (จะหายไปเมื่อรันเสร็จ)
-    st.caption(f"📤 Sending to AI -> Topic: {topic} | Persona: {persona}")
+    # ดักค่าว่าง
+    s_topic = str(topic).strip() if topic else "ทั่วไป"
+    s_guide = str(guide).strip() if guide else "คอมเมนต์ให้น่าสนใจ"
+    s_persona = str(persona).strip() if persona else "กะเทยเล่น RoV"
 
+    # ส่งดักทั้งตัวเล็กตัวใหญ่
     payload = {
         "inputs": {
-            "Topic": str(topic), # ส่งตัวใหญ่ตัวแรกตามที่ตั้งใน Insea
-            "Guide": str(guide),
-            "Persona": str(persona)
+            "Topic": s_topic,
+            "topic": s_topic,
+            "Guide": s_guide,
+            "guide": s_guide,
+            "Persona": s_persona,
+            "persona": s_persona
         },
         "response_mode": "blocking", 
-        "user": "admin_debug"
+        "user": "admin_portal"
     }
     
     try:
         response = requests.post(api_url, json=payload, headers=headers, timeout=60)
+        
+        if response.status_code != 200:
+            return [f"❌ API Error {response.status_code}: {response.text[:100]}"]
+            
         res = response.json()
         
+        # ค้นหาข้อความคำตอบจากโครงสร้างต่างๆ
         raw_text = ""
         if 'data' in res and 'outputs' in res['data']:
             raw_text = res['data']['outputs'].get('text', "")
         elif 'outputs' in res:
             raw_text = res['outputs'].get('text', "")
 
-        if not raw_text:
-            return [f"❌ Error: {res.get('message', 'AI ไม่ส่งข้อความกลับมา')}"]
+        if not raw_text or len(str(raw_text).strip()) < 5:
+            # ถ้า AI ตอบว่า "ไม่มีหัวข้อ" หรือค่าว่าง
+            error_msg = res.get('message', 'AI ไม่ยอมตอบ (ลองเช็ค Start Node ใน Insea)')
+            return [f"⚠️ {error_msg}"]
 
+        # แยกข้อความ 10 แบบ
         options = re.split(r'\n\s*\d+[\.\)]\s*|\n\s*-\s*', "\n" + str(raw_text).strip())
         return [opt.strip() for opt in options if len(opt.strip()) > 5]
+        
     except Exception as e:
         return [f"❌ Error Connect: {str(e)}"]
 
@@ -97,14 +118,18 @@ if not st.session_state.logged_in:
     u_email = st.text_input("Email")
     u_pass = st.text_input("Password", type="password")
     if st.button("Sign In", use_container_width=True):
-        user = next((x for x in st.session_state.users_db if x['email'] == u_email and str(x['password']) == u_pass), None)
-        if user:
-            st.session_state.logged_in = True
-            st.session_state.user_role = user['role']
-            st.session_state.current_user = user['email']
-            st.rerun()
+        if 'users_db' in st.session_state:
+            user = next((x for x in st.session_state.users_db if x['email'] == u_email and str(x['password']) == u_pass), None)
+            if user:
+                st.session_state.logged_in = True
+                st.session_state.user_role = user['role']
+                st.session_state.current_user = user['email']
+                st.rerun()
+            else:
+                st.error("อีเมลหรือรหัสผ่านไม่ถูกต้อง")
 else:
-    # --- ADMIN VIEW ---
+    st.sidebar.title(f"👤 {st.session_state.user_role}")
+    
     if st.session_state.user_role == "Admin":
         st.title("📥 My Assigned Tasks")
         my_tasks = [t for t in st.session_state.db if t['PIC'] == st.session_state.current_user]
@@ -114,51 +139,53 @@ else:
                 with st.expander(f"📌 {t.get('Topic', 'No Topic')} | สถานะ: {t.get('Status', 'Pending')}", expanded=True):
                     st.markdown("### 📝 รายละเอียดงาน")
                     
-                    # วางตัวแปรรับค่าจากหน้าจอ
                     c1, c2, c3 = st.columns([1, 1, 1])
-                    input_topic = c1.text_input("หัวข้อ (Topic):", value=t.get('Topic', ''), key=f"t_{t['id']}")
-                    input_guide = c2.text_area("แนวทาง (Guide):", value=t.get('Guide', ''), key=f"g_{t['id']}")
-                    input_persona = c3.text_area("บุคลิก AI (Persona):", value=t.get('Persona', ''), key=f"p_{t['id']}")
+                    # แสดง Topic ให้เห็นและแก้ไขได้ตามโจทย์
+                    input_topic = c1.text_input("หัวข้อคอนเทนต์ (Topic):", value=t.get('Topic', ''), key=f"t_{t['id']}")
+                    input_guide = c2.text_area("แนวทาง (Guide):", value=t.get('Guide', ''), key=f"g_{t['id']}", height=100)
+                    input_persona = c3.text_area("บุคลิก AI (Persona):", value=t.get('Persona', ''), key=f"p_{t['id']}", height=100)
 
-                    if st.button("✨ Draft with AI (10 แบบ)", key=f"ai_{t['id']}", type="primary"):
+                    if st.button("✨ Draft with AI (10 แบบ)", key=f"ai_{t['id']}", type="primary", use_container_width=True):
                         if not input_topic:
-                            st.error("แม่! ใส่หัวข้อก่อน AI มันไม่รู้จะเขียนเรื่องอะไร!")
+                            st.warning("กรุณากรอกหัวข้อก่อน!")
                         else:
-                            with st.spinner("AI กำลังปั่น..."):
-                                # อัปเดตค่ากลับเข้าตัวแปร t ทันที
-                                t['Topic'] = input_topic
-                                t['Guide'] = input_guide
-                                t['Persona'] = input_persona
-                                
+                            with st.spinner("กำลังปั่นเนื้อหา..."):
                                 results = call_ai_agent(input_topic, input_guide, input_persona)
                                 st.session_state[f"opts_{t['id']}"] = results
                     
                     if f"opts_{t['id']}" in st.session_state:
                         st.markdown("---")
+                        st.subheader("เลือกร่างที่ชอบ:")
                         for i, msg in enumerate(st.session_state[f"opts_{t['id']}"]):
                             if st.button(f"เลือกแบบที่ {i+1}: {msg[:80]}...", key=f"sel_{t['id']}_{i}", use_container_width=True):
                                 t['Draft'] = msg
-                                t['Topic'] = input_topic # บันทึกหัวข้อที่อาจถูกแก้ไขลงแผ่นงานด้วย
-                                update_task_in_sheets(t['id'], t)
-                                st.rerun()
+                                t['Topic'] = input_topic
+                                t['Guide'] = input_guide
+                                t['Persona'] = input_persona
+                                if update_task_in_sheets(t['id'], t):
+                                    st.success("บันทึกร่างแล้ว!")
+                                    st.rerun()
 
-                    t['Draft'] = st.text_area("ร่างสุดท้าย:", value=t.get('Draft', ''), key=f"dr_{t['id']}", height=100)
-                    if st.button("🚀 ส่งงาน", key=f"sub_{t['id']}", use_container_width=True):
+                    t['Draft'] = st.text_area("ร่างสุดท้าย:", value=t.get('Draft', ''), key=f"dr_{t['id']}", height=150)
+                    if st.button("🚀 ส่งให้ Boss ตรวจ", key=f"sub_{t['id']}", use_container_width=True):
                         t['Status'] = "Reviewing"
-                        update_task_in_sheets(t['id'], t)
-                        st.rerun()
+                        if update_task_in_sheets(t['id'], t):
+                            st.rerun()
 
-    # --- BOSS VIEW ---
     elif st.session_state.user_role == "Boss":
         st.title("👨‍💼 Reviewing Board")
-        # (ส่วน Boss ยังคงเดิม)
-        # ... [โค้ดส่วน Boss เหมือนเวอร์ชันก่อนหน้า] ...
         review_tasks = [t for t in st.session_state.db if t['Status'] == "Reviewing"]
         for t in review_tasks:
-            with st.expander(f"📋 ตรวจงาน: {t['Topic']}"):
-                st.write(t['Draft'])
-                if st.button("Approve", key=f"ap_{t['id']}"):
+            with st.expander(f"📋 ตรวจงานจาก {t['PIC']}: {t['Topic']}"):
+                st.write(f"**Persona:** {t['Persona']}")
+                st.info(t['Draft'])
+                c1, c2 = st.columns(2)
+                if c1.button("✅ Approve", key=f"ap_{t['id']}", use_container_width=True):
                     t['Status'] = "Approved"
+                    update_task_in_sheets(t['id'], t)
+                    st.rerun()
+                if c2.button("❌ Reject", key=f"rej_{t['id']}", use_container_width=True):
+                    t['Status'] = "Pending"
                     update_task_in_sheets(t['id'], t)
                     st.rerun()
 
